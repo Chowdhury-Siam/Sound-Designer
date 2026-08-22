@@ -3,12 +3,19 @@
 # 🎵 S O U N D D E S I G N E R 🎵
 
 ```text
-███████╗ ██████╗ ██╗   ██╗███╗   ██╗██████╗ ██████╗ ███████╗███████╗██╗ ██████╗ ███╗   ██╗███████╗██████╗
-██╔════╝██╔═══██╗██║   ██║████╗  ██║██╔══██╗██╔══██╗██╔════╝██╔════╝██║██╔════╝ ████╗  ██║██╔════╝██╔══██╗
-███████╗██║   ██║██║   ██║██╔██╗ ██║██║  ██║██║  ██║█████╗  ███████╗██║██║  ███╗██╔██╗ ██║█████╗  ██████╔╝
-╚════██║██║   ██║██║   ██║██║╚██╗██║██║  ██║██║  ██║██╔══╝  ╚════██║██║██║   ██║██║╚██╗██║██╔══╝  ██╔══██╗
-███████║╚██████╔╝╚██████╔╝██║ ╚████║██████╔╝██████╔╝███████╗███████║██║╚██████╔╝██║ ╚████║███████╗██║  ██║
-╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═══╝╚═════╝ ╚═════╝ ╚══════╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝
+        ███████╗ ██████╗ ██╗   ██╗███╗   ██╗██████╗
+        ██╔════╝██╔═══██╗██║   ██║████╗  ██║██╔══██╗
+        ███████╗██║   ██║██║   ██║██╔██╗ ██║██║  ██║
+        ╚════██║██║   ██║██║   ██║██║╚██╗██║██║  ██║
+        ███████║╚██████╔╝╚██████╔╝██║ ╚████║██████╔╝
+        ╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═══╝╚═════╝
+
+██████╗ ███████╗███████╗██╗ ██████╗ ███╗   ██╗███████╗██████╗
+██╔══██╗██╔════╝██╔════╝██║██╔════╝ ████╗  ██║██╔════╝██╔══██╗
+██║  ██║█████╗  ███████╗██║██║  ███╗██╔██╗ ██║█████╗  ██████╔╝
+██║  ██║██╔══╝  ╚════██║██║██║   ██║██║╚██╗██║██╔══╝  ██╔══██╗
+██████╔╝███████╗███████║██║╚██████╔╝██║ ╚████║███████╗██║  ██║
+╚═════╝ ╚══════╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝
 ```
 
 **Find it. Shape it. Drop it into the edit.**
@@ -43,6 +50,7 @@ A fast, project-aware sound-effects workspace for **Adobe Premiere Pro** and **A
 - [Development](#development)
 - [Publishing](#publishing)
 - [Troubleshooting](#troubleshooting)
+- [Developers](#developers)
 - [License](#license)
 
 ---
@@ -416,6 +424,17 @@ Confirm that an Adobe project—and, in After Effects, an active composition—i
 - Cloud downloads are limited to trusted Freesound HTTPS hosts and use bounded file sizes.
 - Interrupted temporary downloads and renders are cleaned up.
 - Updates are explicit: SoundDesigner never silently replaces the installed extension.
+
+---
+
+<a id="developers"></a>
+
+## 👨‍💻 Developers
+
+SoundDesigner is developed and maintained by:
+
+- [@raselerkaj](https://t.me/raselerkaj)
+- [@itsniloybhowmick](https://t.me/itsniloybhowmick)
 
 ---
 
