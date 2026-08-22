@@ -58,7 +58,7 @@
   <div class="panel-heading">
     <div><span class="eyebrow">Library</span><strong>{activeSourceCount} {activeSourceCount === 1 ? "source" : "sources"} active</strong></div>
     <div class="heading-actions">
-      <IconButton icon="refresh" label="Rescan all folders" onclick={onRescan} disabled={indexing} />
+      <IconButton icon="refresh" label="Rescan all folders" onclick={onRescan} disabled={indexing} class={`rescan-button ${indexing ? "is-loading" : ""}`} />
       <IconButton icon="add" label="Add sound folder" onclick={onAddFolder} />
       <IconButton icon="close" label="Close library drawer" onclick={onClose} class="drawer-close" />
     </div>

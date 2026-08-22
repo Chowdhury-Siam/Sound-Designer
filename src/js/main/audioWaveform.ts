@@ -1,4 +1,6 @@
 import { fs, https } from "../lib/cep/node";
+import { encodeRenderedWave, renderAudioProcessing } from "./audioEffects";
+import type { AudioProcessingSettings, AudioSegmentSelection, SoundFile } from "./types";
 
 // Keep enough source detail for the 3x preview zoom while the renderer caps the
 // number of SVG points it draws. This remains tiny compared with decoded audio:
@@ -7,7 +9,20 @@ const PEAK_BINS = 1536;
 const MAX_DECODE_BYTES = 32 * 1024 * 1024;
 const MAX_DECODE_DURATION_SECONDS = 120;
 const MAX_CACHE_ENTRIES = 8;
+const MAX_PREVIEW_PCM_BYTES = 96 * 1024 * 1024;
 const channelCache = new Map<string, Float32Array[]>();
+let processedPreviewDecodeCache: { key: string; buffer: AudioBuffer } | null = null;
+let processedPreviewDecodePending: { key: string; promise: Promise<AudioBuffer> } | null = null;
+let processedPreviewEvictionTimer = 0;
+
+const retainProcessedPreviewDecode = (key: string, buffer: AudioBuffer) => {
+  processedPreviewDecodeCache = { key, buffer };
+  if (processedPreviewEvictionTimer) window.clearTimeout(processedPreviewEvictionTimer);
+  processedPreviewEvictionTimer = window.setTimeout(() => {
+    if (processedPreviewDecodeCache?.key === key) processedPreviewDecodeCache = null;
+    processedPreviewEvictionTimer = 0;
+  }, 20_000);
+};
 
 const readAudioFile = (filePath: string) => new Promise<ArrayBuffer>((resolve, reject) => {
   fs.readFile(filePath, (error, bytes) => {
@@ -224,4 +239,77 @@ export const decodeRemoteAudioWaveformChannels = async (
   } catch (_error) {
     return [];
   }
+};
+
+const processedPreviewSourceKey = (sound: SoundFile) => sound.path
+  ? `file:${sound.path}:${sound.modifiedAt}:${sound.size}`
+  : `remote:${sound.previewUrl || ""}`;
+
+const decodeProcessedPreviewSource = async (sound: SoundFile, signal?: AbortSignal) => {
+  const key = processedPreviewSourceKey(sound);
+  if (processedPreviewDecodeCache?.key === key) {
+    const cached = processedPreviewDecodeCache.buffer;
+    retainProcessedPreviewDecode(key, cached);
+    return cached;
+  }
+  if (processedPreviewDecodeCache) processedPreviewDecodeCache = null;
+
+  let pending = processedPreviewDecodePending?.key === key ? processedPreviewDecodePending.promise : null;
+  if (!pending) {
+    pending = (async () => {
+      const bytes = sound.path
+        ? await readAudioFile(sound.path)
+        : (sound.previewUrl || "").startsWith("data:")
+          ? await (await fetch(sound.previewUrl || "")).arrayBuffer()
+          : await readRemoteAudio(sound.previewUrl || "");
+      const AudioContextConstructor = window.AudioContext;
+      if (!AudioContextConstructor) throw new Error("The CEP audio decoder is unavailable.");
+      let context: AudioContext | null = null;
+      try {
+        context = new AudioContextConstructor();
+        const decoded = await context.decodeAudioData(bytes);
+        const decodedBytes = decoded.length * decoded.numberOfChannels * 4;
+        if (!Number.isFinite(decodedBytes) || decodedBytes > MAX_PREVIEW_PCM_BYTES) {
+          throw new Error("This sound needs too much memory for live effects preview. Processed import is still available.");
+        }
+        return decoded;
+      } finally {
+        try { if (context) await context.close(); } catch (_error) {}
+      }
+    })();
+    processedPreviewDecodePending = { key, promise: pending };
+  }
+
+  try {
+    const decoded = await pending;
+    if (processedPreviewDecodePending?.promise === pending) {
+      retainProcessedPreviewDecode(key, decoded);
+      processedPreviewDecodePending = null;
+    }
+    if (signal?.aborted) throw new DOMException("Audio effects preview was cancelled.", "AbortError");
+    return decoded;
+  } catch (error) {
+    if (processedPreviewDecodePending?.promise === pending) processedPreviewDecodePending = null;
+    throw error;
+  }
+};
+
+export const renderProcessedPreview = async (
+  sound: SoundFile,
+  selection: AudioSegmentSelection | null,
+  processing: AudioProcessingSettings,
+  signal?: AbortSignal,
+) => {
+  if (sound.duration > MAX_DECODE_DURATION_SECONDS) throw new Error("Audio effects preview is limited to two-minute sounds. The processed import is still available.");
+  if (sound.path && sound.size > MAX_DECODE_BYTES) throw new Error("This file is too large for an in-panel effects preview. The processed import is still available.");
+  const decoded = await decodeProcessedPreviewSource(sound, signal);
+  const startFrame = selection ? Math.floor(Math.max(0, selection.start) * decoded.sampleRate) : 0;
+  const endFrame = selection ? Math.ceil(Math.min(decoded.duration, selection.end) * decoded.sampleRate) : decoded.length;
+  const rendered = await renderAudioProcessing(decoded, processing, "preserve", signal, startFrame, endFrame);
+  const wave = await encodeRenderedWave(rendered, 16, signal);
+  return {
+    url: URL.createObjectURL(new Blob([wave], { type: "audio/wav" })),
+    duration: rendered.duration,
+    channels: rendered.channels.length,
+  };
 };

@@ -8,9 +8,25 @@ export type AudioConversionPolicy = "unsupported" | "always" | "never";
 
 export type AudioNormalization = "preserve" | "peak-minus-one";
 
+export type AudioPreparationStage = "downloading" | "converting";
+
+export type AudioPreparationStatus = {
+  stage: AudioPreparationStage;
+  message: string;
+  progress?: number;
+};
+
 export type AudioSegmentSelection = {
   start: number;
   end: number;
+};
+
+export type AudioProcessingSettings = {
+  reverse: boolean;
+  gainDb: number;
+  pitchSemitones: number;
+  speed: number;
+  preservePitch: boolean;
 };
 
 export type InsertionTarget = "playhead" | "selected-clip";

@@ -242,7 +242,7 @@
               <strong>SoundDesigner {INSTALLED_VERSION}</strong>
               <small>{update.status === "checking" ? "Checking GitHub…" : update.message || "Updates have not been checked yet."}</small>
             </span>
-            <IconButton icon="refresh" label="Check GitHub for updates" onclick={onCheckUpdate} disabled={update.status === "checking"} />
+            <IconButton icon="refresh" label="Check GitHub for updates" onclick={onCheckUpdate} disabled={update.status === "checking"} class={`rescan-button ${update.status === "checking" ? "is-loading" : ""}`} />
             {#if update.status === "available"}<IconButton icon="download" label={`Download SoundDesigner ${update.latestVersion}`} onclick={onOpenUpdate} />{/if}
           </div>
           <p>Stable releases are checked at most once every 24 hours. Downloads open in your default browser for explicit installation.</p>

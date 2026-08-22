@@ -2,20 +2,20 @@ import { crypto, fs, https, path } from "../lib/cep/node";
 import type {
   AudioConversionPolicy,
   AudioNormalization,
+  AudioProcessingSettings,
+  AudioPreparationStage,
   AudioSegmentSelection,
   HostApp,
   HostProjectContext,
   SoundFile,
 } from "./types";
+import { audioProcessingKey, encodeRenderedWave, hasAudioProcessing, renderAudioProcessing } from "./audioEffects";
 
 const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
 const MAX_DECODE_BYTES = 128 * 1024 * 1024;
 const MAX_CONVERTED_PCM_BYTES = 128 * 1024 * 1024;
 const MAX_DECODED_PCM_BYTES = Math.floor(MAX_CONVERTED_PCM_BYTES * 4 / 3);
-const ENCODE_CHECK_INTERVAL = 8192;
-const MAIN_THREAD_BUDGET_MS = 10;
 const MIN_SEGMENT_SECONDS = 0.05;
-const TARGET_PEAK = Math.pow(10, -1 / 20);
 const DIRECT_ADOBE_AUDIO: { [extension: string]: boolean } = {
   aac: true,
   aif: true,
@@ -31,10 +31,12 @@ export const requiresProjectAudioPreparation = (
   sound: SoundFile,
   conversionPolicy: AudioConversionPolicy,
   normalization: AudioNormalization,
-) => Boolean(sound.path && sound.preparedProfile === `${conversionPolicy}:${normalization}`)
+  processing?: AudioProcessingSettings,
+) => Boolean(sound.path && sound.preparedProfile === `${conversionPolicy}:${normalization}:${audioProcessingKey(processing)}`)
   ? false
   : sound.source === "freesound"
   || normalization !== "preserve"
+  || hasAudioProcessing(processing)
   || conversionPolicy === "always"
   || (conversionPolicy === "unsupported" && !DIRECT_ADOBE_AUDIO[sound.extension.toLowerCase()]);
 
@@ -43,8 +45,9 @@ export type PrepareAudioOptions = {
   project: HostProjectContext;
   conversionPolicy: AudioConversionPolicy;
   normalization: AudioNormalization;
+  processing?: AudioProcessingSettings;
   signal?: AbortSignal;
-  onProgress?: (stage: "downloading" | "converting", message: string) => void;
+  onProgress?: (stage: AudioPreparationStage, message: string, progress?: number) => void;
 };
 
 export type PreparedAudio = {
@@ -98,6 +101,7 @@ const downloadFile = (
   sourceUrl: string,
   destination: string,
   signal?: AbortSignal,
+  onProgress?: (progress?: number) => void,
   redirectCount = 0,
 ): Promise<void> => new Promise((resolve, reject) => {
   if (!window.cep || !https || typeof https.get !== "function" || !fs || typeof fs.createWriteStream !== "function") {
@@ -111,6 +115,7 @@ const downloadFile = (
   const temporaryPath = `${destination}.part`;
   let settled = false;
   let received = 0;
+  let lastProgressAt = 0;
   let abortHandler: (() => void) | null = null;
   const cleanupSignal = () => {
     if (signal && abortHandler) signal.removeEventListener("abort", abortHandler);
@@ -137,7 +142,7 @@ const downloadFile = (
       if (!redirected || !trustedDownloadUrl(redirected)) return finishError(new Error("Freesound redirected to an untrusted download address."));
       settled = true;
       cleanupSignal();
-      downloadFile(redirected, destination, signal, redirectCount + 1).then(resolve, reject);
+      downloadFile(redirected, destination, signal, onProgress, redirectCount + 1).then(resolve, reject);
       return;
     }
     if (statusCode < 200 || statusCode >= 300) {
@@ -149,6 +154,7 @@ const downloadFile = (
       response.resume();
       return finishError(new Error("This sound is too large to download safely."));
     }
+    onProgress?.(contentLength > 0 ? 0 : undefined);
     const output = fs.createWriteStream(temporaryPath);
     response.on("data", (chunk: Uint8Array) => {
       received += chunk.length;
@@ -156,6 +162,12 @@ const downloadFile = (
         request.abort();
         output.destroy();
         finishError(new Error("This sound exceeded the maximum safe download size."));
+        return;
+      }
+      const now = Date.now();
+      if (now - lastProgressAt >= 80) {
+        lastProgressAt = now;
+        onProgress?.(contentLength > 0 ? Math.min(0.995, received / contentLength) : undefined);
       }
     });
     response.on("error", (error) => finishError(error instanceof Error ? error : new Error(String(error))));
@@ -167,6 +179,7 @@ const downloadFile = (
           if (!received) throw new Error("Freesound returned an empty audio file.");
           if (fs.existsSync(destination)) fs.unlinkSync(destination);
           fs.renameSync(temporaryPath, destination);
+          onProgress?.(1);
           settled = true;
           cleanupSignal();
           resolve();
@@ -225,76 +238,19 @@ const decodeAudio = async (filePath: string, signal?: AbortSignal) => {
   }
 };
 
-const writeAscii = (view: DataView, offset: number, value: string) => {
-  for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
-};
-
 const encodePcm24Wave = async (
   audioBuffer: AudioBuffer,
   normalization: AudioNormalization,
+  processing?: AudioProcessingSettings,
   signal?: AbortSignal,
   frameStart = 0,
   frameEnd = audioBuffer.length,
 ) => {
-  const boundedStart = Math.max(0, Math.min(audioBuffer.length - 1, Math.floor(frameStart)));
-  const boundedEnd = Math.max(boundedStart + 1, Math.min(audioBuffer.length, Math.ceil(frameEnd)));
-  const frameCount = boundedEnd - boundedStart;
-  const channels: Float32Array[] = [];
-  let peak = 0;
-  let sliceStartedAt = performance.now();
-  const yieldToPanel = async () => {
-    if (signal?.aborted) throw new DOMException("Audio preparation was cancelled.", "AbortError");
-    if (performance.now() - sliceStartedAt < MAIN_THREAD_BUDGET_MS) return;
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-    sliceStartedAt = performance.now();
-  };
-  for (let channel = 0; channel < audioBuffer.numberOfChannels; channel += 1) {
-    const samples = audioBuffer.getChannelData(channel);
-    channels.push(samples);
-    if (normalization === "peak-minus-one") {
-      for (let index = boundedStart; index < boundedEnd; index += 1) {
-        const absolute = Math.abs(samples[index]);
-        if (absolute > peak) peak = absolute;
-        if (index > 0 && index % ENCODE_CHECK_INTERVAL === 0) await yieldToPanel();
-      }
-    }
-  }
-  const gain = normalization === "peak-minus-one" && peak > 0 ? TARGET_PEAK / peak : 1;
-  const gainDb = gain > 0 ? 20 * Math.log(gain) / Math.LN10 : 0;
-  const bytesPerSample = 3;
-  const blockAlign = audioBuffer.numberOfChannels * bytesPerSample;
-  const dataLength = frameCount * blockAlign;
+  const rendered = await renderAudioProcessing(audioBuffer, processing, normalization, signal, frameStart, frameEnd);
+  const dataLength = rendered.length * rendered.channels.length * 3;
   if (dataLength > MAX_CONVERTED_PCM_BYTES) throw new Error("This sound is too long to convert safely in the Adobe panel. Trim it or convert it externally first.");
   if (dataLength + 44 > 0xffffffff) throw new Error("The converted WAV would exceed the 4 GB RIFF limit.");
-  const bytes = new Uint8Array(44 + dataLength);
-  const view = new DataView(bytes.buffer);
-  writeAscii(view, 0, "RIFF");
-  view.setUint32(4, 36 + dataLength, true);
-  writeAscii(view, 8, "WAVE");
-  writeAscii(view, 12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, audioBuffer.numberOfChannels, true);
-  view.setUint32(24, audioBuffer.sampleRate, true);
-  view.setUint32(28, audioBuffer.sampleRate * blockAlign, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, 24, true);
-  writeAscii(view, 36, "data");
-  view.setUint32(40, dataLength, true);
-  let offset = 44;
-  for (let frame = 0; frame < frameCount; frame += 1) {
-    const sourceFrame = boundedStart + frame;
-    for (let channel = 0; channel < channels.length; channel += 1) {
-      const sample = Math.max(-1, Math.min(1, channels[channel][sourceFrame] * gain));
-      let integer = sample < 0 ? Math.round(sample * 0x800000) : Math.round(sample * 0x7fffff);
-      if (integer < 0) integer += 0x1000000;
-      bytes[offset++] = integer & 0xff;
-      bytes[offset++] = (integer >>> 8) & 0xff;
-      bytes[offset++] = (integer >>> 16) & 0xff;
-    }
-    if (frame > 0 && frame % ENCODE_CHECK_INTERVAL === 0) await yieldToPanel();
-  }
-  return { bytes, gainDb };
+  return { bytes: await encodeRenderedWave(rendered, 24, signal), gainDb: rendered.gainDb, duration: rendered.duration };
 };
 
 const writeFileAsync = (filePath: string, bytes: Uint8Array) => new Promise<void>((resolve, reject) => {
@@ -308,9 +264,9 @@ const writeJsonAtomically = (filePath: string, value: unknown) => {
   fs.renameSync(temporary, filePath);
 };
 
-const fileFingerprint = (sound: SoundFile, sourcePath: string, policy: AudioConversionPolicy, normalization: AudioNormalization) => {
+const fileFingerprint = (sound: SoundFile, sourcePath: string, policy: AudioConversionPolicy, normalization: AudioNormalization, processing?: AudioProcessingSettings) => {
   const stat = fs.statSync(sourcePath);
-  const key = [sound.source || "local", sound.sourceId || sound.id, sourcePath, stat.size, stat.mtimeMs, policy, normalization].join("|");
+  const key = [sound.source || "local", sound.sourceId || sound.id, sourcePath, stat.size, stat.mtimeMs, policy, normalization, audioProcessingKey(processing)].join("|");
   return crypto.createHash("sha1").update(key).digest("hex").slice(0, 12);
 };
 
@@ -346,6 +302,7 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
   let downloaded = false;
 
   const localNeedsConversion = options.normalization !== "preserve"
+    || hasAudioProcessing(options.processing)
     || options.conversionPolicy === "always"
     || (options.conversionPolicy === "unsupported" && !DIRECT_ADOBE_AUDIO[workingExtension]);
   if (sound.source !== "freesound" && !localNeedsConversion) {
@@ -377,7 +334,12 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
     workingPath = path.join(directories.originals, `${baseName}.${workingExtension}`);
     if (!fs.existsSync(workingPath)) {
       options.onProgress?.("downloading", `Downloading ${sound.name}…`);
-      await downloadFile(sound.previewUrl, workingPath, options.signal);
+      await downloadFile(
+        sound.previewUrl,
+        workingPath,
+        options.signal,
+        (progress) => options.onProgress?.("downloading", `Downloading ${sound.name}…`, progress),
+      );
       downloaded = true;
     }
     const sourceMetadataPath = path.join(directories.metadata, `${baseName}.json`);
@@ -398,15 +360,19 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
   if (!workingPath || !fs.existsSync(workingPath)) throw new Error("The source audio file is unavailable.");
   const needsCompatibilityConversion = !DIRECT_ADOBE_AUDIO[workingExtension];
   const needsConversion = options.normalization !== "preserve"
+    || hasAudioProcessing(options.processing)
     || options.conversionPolicy === "always"
     || (options.conversionPolicy === "unsupported" && needsCompatibilityConversion);
   let preparedPath = workingPath;
+  let preparedDuration = hasAudioProcessing(options.processing)
+    ? sound.duration / Math.max(0.5, options.processing?.speed || 1)
+    : sound.duration;
   let gainDb = 0;
   let converted = false;
 
   if (needsConversion) {
     options.onProgress?.("converting", options.normalization === "peak-minus-one" ? `Converting and normalizing ${sound.name}…` : `Converting ${sound.name} to WAV…`);
-    const fingerprint = fileFingerprint(sound, workingPath, options.conversionPolicy, options.normalization);
+    const fingerprint = fileFingerprint(sound, workingPath, options.conversionPolicy, options.normalization, options.processing);
     const suffix = options.normalization === "peak-minus-one" ? "-norm-1db" : "";
     preparedPath = path.join(directories.converted, `${safeName(sound.sourceId || sound.id, "sound")}-${safeName(sound.name, "audio")}-${fingerprint}${suffix}.wav`);
     if (!fs.existsSync(preparedPath)) {
@@ -414,8 +380,9 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
       try {
         const decoded = await decodeAudio(workingPath, options.signal);
         if (options.signal?.aborted) throw new DOMException("Audio preparation was cancelled.", "AbortError");
-        const encoded = await encodePcm24Wave(decoded, options.normalization, options.signal);
+        const encoded = await encodePcm24Wave(decoded, options.normalization, options.processing, options.signal);
         gainDb = encoded.gainDb;
+        preparedDuration = encoded.duration;
         await writeFileAsync(temporary, encoded.bytes);
         if (fs.existsSync(preparedPath)) fs.unlinkSync(preparedPath);
         fs.renameSync(temporary, preparedPath);
@@ -435,6 +402,7 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
       sampleRate: "preserved",
       channels: "preserved",
       normalization: options.normalization,
+      processing: options.processing,
       gainDb,
       createdAt: new Date().toISOString(),
     });
@@ -448,9 +416,12 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
       extension: converted ? "wav" : workingExtension,
       size: stat.size,
       modifiedAt: stat.mtimeMs || stat.mtime.getTime(),
+      duration: converted && hasAudioProcessing(options.processing)
+        ? preparedDuration || sound.duration / Math.max(0.5, options.processing?.speed || 1)
+        : sound.duration,
       downloadState: sound.source === "freesound" ? "ready" : sound.downloadState,
       preparedProjectPath: options.project.projectPath,
-      preparedProfile: `${options.conversionPolicy}:${options.normalization}`,
+      preparedProfile: `${options.conversionPolicy}:${options.normalization}:${audioProcessingKey(options.processing)}`,
       originalPath: sound.source === "freesound" ? sound.originalPath : sound.originalPath || workingPath,
       originalExtension: sound.originalExtension || sound.extension,
     },
@@ -470,7 +441,14 @@ export const prepareAudioSegmentForHost = async (
   if (!Number.isFinite(selection.start) || !Number.isFinite(selection.end)) throw new Error("The selected audio range is invalid.");
   if (selection.end - selection.start < MIN_SEGMENT_SECONDS) throw new Error("Select at least 0.05 seconds of audio.");
 
-  const preparedSource = await prepareAudioForHost(sound, options);
+  // Prepare only for codec compatibility here. Applying normalization to the
+  // whole source would create an unnecessary intermediate WAV and would base
+  // the gain on audio outside the user's selected range.
+  const preparedSource = await prepareAudioForHost(sound, {
+    ...options,
+    normalization: "preserve",
+    processing: undefined,
+  });
   const sourcePath = preparedSource.sound.path;
   if (!sourcePath || !fs.existsSync(sourcePath)) throw new Error("The prepared source audio is unavailable.");
 
@@ -487,10 +465,10 @@ export const prepareAudioSegmentForHost = async (
   const startFrame = Math.floor(startSeconds * decoded.sampleRate);
   const endFrame = Math.min(decoded.length, Math.ceil(endSeconds * decoded.sampleRate));
   const directories = projectDirectories(options.project);
-  const sourceFingerprint = fileFingerprint(preparedSource.sound, sourcePath, options.conversionPolicy, options.normalization);
+  const sourceFingerprint = fileFingerprint(preparedSource.sound, sourcePath, options.conversionPolicy, options.normalization, options.processing);
   const rangeToken = `${segmentTimeToken(startSeconds)}-${segmentTimeToken(endSeconds)}`;
   const fingerprint = crypto.createHash("sha1")
-    .update(`${sourceFingerprint}|${rangeToken}|pcm24`)
+    .update(`${sourceFingerprint}|${rangeToken}|${audioProcessingKey(options.processing)}|pcm24`)
     .digest("hex")
     .slice(0, 12);
   const baseName = `${safeName(sound.sourceId || sound.id, "sound")}-${safeName(sound.name, "audio")}-segment-${rangeToken}-${fingerprint}`;
@@ -499,7 +477,7 @@ export const prepareAudioSegmentForHost = async (
   if (!fs.existsSync(outputPath)) {
     const temporary = `${outputPath}.part`;
     try {
-      const encoded = await encodePcm24Wave(decoded, "preserve", options.signal, startFrame, endFrame);
+      const encoded = await encodePcm24Wave(decoded, options.normalization, options.processing, options.signal, startFrame, endFrame);
       await writeFileAsync(temporary, encoded.bytes);
       if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
       fs.renameSync(temporary, outputPath);
@@ -509,7 +487,7 @@ export const prepareAudioSegmentForHost = async (
     }
   }
 
-  const segmentDuration = (endFrame - startFrame) / decoded.sampleRate;
+  const segmentDuration = (endFrame - startFrame) / decoded.sampleRate / Math.max(0.5, options.processing?.speed || 1);
   const segmentName = `${sound.name} [${segmentDisplayTime(startSeconds)}–${segmentDisplayTime(endSeconds)}]`;
   const metadataPath = path.join(directories.metadata, `${baseName}.json`);
   writeJsonAtomically(metadataPath, {
@@ -526,6 +504,7 @@ export const prepareAudioSegmentForHost = async (
     sampleRate: decoded.sampleRate,
     channels: decoded.numberOfChannels,
     normalization: options.normalization,
+    processing: options.processing,
     createdAt: new Date().toISOString(),
   });
 
@@ -543,7 +522,7 @@ export const prepareAudioSegmentForHost = async (
       waveform: sound.waveform,
       downloadState: sound.source === "freesound" ? "ready" : sound.downloadState,
       preparedProjectPath: options.project.projectPath,
-      preparedProfile: `${options.conversionPolicy}:${options.normalization}`,
+      preparedProfile: `${options.conversionPolicy}:${options.normalization}:${audioProcessingKey(options.processing)}`,
       originalPath: preparedSource.sound.originalPath || sourcePath,
       originalExtension: preparedSource.sound.originalExtension || preparedSource.sound.extension,
     },

@@ -1,22 +1,30 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
+
   let {
     channels = [],
     fallback = new Float32Array([0]),
     progress = 0,
     zoom = 1,
     reversed = false,
+    reverseRange = null,
     showModeControls = true,
     channelCountHint = 0,
     loading = false,
+    onReverse,
+    reverseSelection = false,
   }: {
     channels: Float32Array[];
     fallback: Float32Array;
     progress?: number;
     zoom?: number;
     reversed?: boolean;
+    reverseRange?: { start: number; end: number } | null;
     showModeControls?: boolean;
     channelCountHint?: number;
     loading?: boolean;
+    onReverse?: () => void;
+    reverseSelection?: boolean;
   } = $props();
 
   const FALLBACK_BINS = 1536;
@@ -51,13 +59,22 @@
       absolutePeak = Math.max(absolutePeak, Math.abs(peaks[index * 2]), Math.abs(peaks[index * 2 + 1]));
     }
     const gain = absolutePeak > 0 ? Math.min(3, 0.93 / absolutePeak) : 1;
+    const reverseStart = reverseRange
+      ? Math.max(0, Math.min(totalBins - 1, Math.floor(reverseRange.start * totalBins)))
+      : -1;
+    const reverseEnd = reverseRange
+      ? Math.max(reverseStart + 1, Math.min(totalBins, Math.ceil(reverseRange.end * totalBins)))
+      : -1;
     for (let index = 0; index < renderBins; index += 1) {
       const relativeStart = Math.floor((index * visibleBins) / renderBins);
       const relativeEnd = Math.max(relativeStart + 1, Math.floor(((index + 1) * visibleBins) / renderBins));
       let minimum = 0;
       let maximum = 0;
       for (let relative = relativeStart; relative < relativeEnd; relative += 1) {
-        const sourceIndex = channelReversed ? totalBins - relative - 1 : relative;
+        let sourceIndex = channelReversed ? totalBins - relative - 1 : relative;
+        if (!channelReversed && reverseStart >= 0 && relative >= reverseStart && relative < reverseEnd) {
+          sourceIndex = reverseStart + reverseEnd - relative - 1;
+        }
         minimum = Math.min(minimum, peaks[sourceIndex * 2]);
         maximum = Math.max(maximum, peaks[sourceIndex * 2 + 1]);
       }
@@ -138,7 +155,7 @@
         <span class="channel-analysis"><i aria-hidden="true"></i>Analyzing channels</span>
       </div>
     {:else}
-      <div aria-label="Waveform channel mode" class="channel-labels" role="group">
+      <div aria-label="Waveform view and operations" class="channel-labels" role="group">
         <button
           aria-label="Show mono waveform"
           aria-pressed={effectiveChannelMode === "mono"}
@@ -154,6 +171,15 @@
           onclick={(event) => { event.stopPropagation(); channelMode = "stereo"; }}
           type="button"
         >Stereo</button>
+        <button
+          aria-label={reverseSelection ? "Reverse selected segment" : "Reverse sound"}
+          aria-pressed={reversed}
+          class:is-active={reversed}
+          class="channel-reverse tooltip"
+          data-tooltip={reverseSelection ? "Reverse selected segment" : "Reverse sound"}
+          onclick={(event) => { event.stopPropagation(); onReverse?.(); }}
+          type="button"
+        ><Icon name="reverse" size={11} /><span>Reverse</span></button>
       </div>
     {/if}
   {/if}

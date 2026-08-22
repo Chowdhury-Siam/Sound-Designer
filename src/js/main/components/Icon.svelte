@@ -2,7 +2,7 @@
   export type IconName =
     | "activity" | "add" | "back" | "check" | "chevron" | "close" | "collapse" | "download"
     | "cloud" | "cloudCheck" | "drive" | "drag" | "folder" | "forward" | "heart" | "library" | "list" | "loop"
-    | "minus" | "more" | "next" | "pause" | "play" | "previous" | "refresh"
+    | "lock" | "unlock" | "minus" | "more" | "next" | "pause" | "play" | "previous" | "refresh"
     | "reverse" | "search" | "settings" | "sliders" | "sparkles" | "stop"
     | "trash" | "volume" | "waveform" | "zoomIn" | "zoomOut";
 
@@ -27,13 +27,15 @@
     library: '<path d="M4 4h4v16H4zM10 4h4v16h-4zM16 6l4-1 2 14-4 1z" />',
     list: '<path d="M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01" />',
     loop: '<path d="M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4m14-1v2a3 3 0 0 1-3 3H3" />',
+    lock: '<rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" />',
+    unlock: '<rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 7.5-2" />',
     minus: '<path d="M5 12h14" />',
     more: '<path d="M5 12h.01M12 12h.01M19 12h.01" />',
     next: '<path d="m6 5 10 7L6 19zM18 5v14" />',
     pause: '<path d="M8 5v14M16 5v14" />',
     play: '<path d="m8 5 11 7-11 7z" />',
     previous: '<path d="m18 5-10 7 10 7zM6 5v14" />',
-    refresh: '<path d="M20 7h-5V2M4 17h5v5M19 11a7 7 0 0 0-12-5l-2 2M5 13a7 7 0 0 0 12 5l2-2" />',
+    refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" /><path d="M21 3v5h-5" />',
     reverse: '<path d="m11 6-8 6 8 6V6Zm10 0-8 6 8 6V6Z" />',
     search: '<circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" />',
     settings: '<circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" />',

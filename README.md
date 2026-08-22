@@ -3,203 +3,317 @@
 # 🎵 S O U N D D E S I G N E R 🎵
 
 ```text
-  ____                        _ ____            _                       
- / ___|  ___  _   _ _ __   __| |  _ \ ___  ___(_) __ _ _ __   ___ _ __  
- \___ \ / _ \| | | | '_ \ / _` | | | / _ \/ __| |/ _` | '_ \ / _ \ '__| 
-  ___) | (_) | |_| | | | | (_| | |_| \ __/\__ \ | (_| | | | |  __/ |    
- |____/ \___/ \__,_|_| |_|\__,_|____/ \___||___/_|\__, |_| |_|\___|_|    
-                                                  |___/                 
+  ____                        _ ____            _
+ / ___|  ___  _   _ _ __   __| |  _ \  ___  ___(_) __ _ _ __   ___ _ __
+ \___ \ / _ \| | | | '_ \ / _` | | | |/ _ \/ __| |/ _` | '_ \ / _ \ '__|
+  ___) | (_) | |_| | | | | (_| | |_| |  __/\__ \ | (_| | | | |  __/ |
+ |____/ \___/ \__,_|_| |_|\__,_|____/ \___||___/_|\__, |_| |_|\___|_|
+                                                  |___/
 ```
 
-**The Ultimate Sound Management Extension for Adobe Premiere Pro & After Effects**
+**Find it. Shape it. Drop it into the edit.**
 
-<p align="center">
-  <a href="#"><img src="https://img.shields.io/badge/Version-0.0.6-orange?style=for-the-badge&logo=rocket"></a>
-  <a href="#"><img src="https://img.shields.io/github/repo-size/iboyshanto/SoundDesigner?color=FF4500&label=Size&style=for-the-badge"></a>
-  <a href="#"><img src="https://img.shields.io/github/license/iboyshanto/SoundDesigner?style=for-the-badge&color=FF8C00"></a>
+A fast, project-aware sound-effects workspace for **Adobe Premiere Pro** and **After Effects**.
+
+<p>
+  <a href="https://github.com/iboyshanto/SoundDesigner/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/iboyshanto/SoundDesigner?style=for-the-badge&color=f97316&label=Latest"></a>
+  <a href="https://github.com/iboyshanto/SoundDesigner"><img alt="Repository size" src="https://img.shields.io/github/repo-size/iboyshanto/SoundDesigner?style=for-the-badge&color=FF8C00"></a>
+  <a href="https://github.com/iboyshanto/SoundDesigner/blob/main/LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/iboyshanto/SoundDesigner?style=for-the-badge&color=ea1f26"></a>
   <br>
-  <a href="#"><img src="https://img.shields.io/badge/Powered%20By-Svelte_5-ff3e00?style=for-the-badge&logo=svelte"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Engine-Bun_1.3-fbf0df?style=for-the-badge&logo=bun"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Platform-Adobe_CEP_11-ff0000?style=for-the-badge&logo=adobe"></a>
+  <img alt="Svelte 5" src="https://img.shields.io/badge/Powered_by-Svelte_5-ff3e00?style=for-the-badge&logo=svelte&logoColor=white">
+  <img alt="Bun" src="https://img.shields.io/badge/Tooling-Bun-fbf0df?style=for-the-badge&logo=bun&logoColor=black">
+  <img alt="Adobe CEP 11" src="https://img.shields.io/badge/Platform-Adobe_CEP_11-ea1f26?style=for-the-badge&logo=adobe&logoColor=white">
 </p>
 
-[**Download Latest**](https://github.com/iboyshanto/SoundDesigner/releases) • [**Report a Bug**](https://github.com/iboyshanto/SoundDesigner/issues)
+[**Download Latest**](https://github.com/iboyshanto/SoundDesigner/releases/latest) · [**Report a Bug**](https://github.com/iboyshanto/SoundDesigner/issues) · [**Release Guide**](RELEASING.md)
 
 </div>
 
 ---
 
-## 📑 Table of Contents
+## 🧭 Explore
 
-- [🔮 Overview](#overview)
-- [💎 Features](#features)
-- [⚙️ Prerequisites](#prerequisites)
-- [🚀 Installation](#installation)
-- [🎶 Usage & Workflows](#usage--workflows)
-  - [Freesound Setup](#freesound-setup)
-  - [Project Audio & Conversion](#project-audio--conversion)
-  - [Waveform Segment Selection](#waveform-segment-selection)
-- [🛠️ Development](#development)
-- [📦 Publishing Updates](#publishing-updates)
-- [📜 License](#license)
+- [Meet SoundDesigner](#meet-sounddesigner)
+- [Features](#features)
+- [Get started](#get-started)
+- [Preview, select and shape](#preview-select-shape)
+- [Connect Freesound](#connect-freesound)
+- [Project audio and conversion](#project-audio-conversion)
+- [Settings](#settings)
+- [Development](#development)
+- [Publishing](#publishing)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
 
 ---
 
-<a id="overview"></a>
+<a id="meet-sounddesigner"></a>
 
-## 🔮 Overview
+## ✨ Meet SoundDesigner
 
-**SoundDesigner** is a professional-grade, dockable Adobe CEP extension tailored for video editors and motion designers. It seamlessly integrates into **Adobe Premiere Pro** and **After Effects**, providing an all-in-one hub for managing, searching, previewing, and inserting both local sound effects and Freesound-hosted libraries.
+SoundDesigner keeps sound design close to the timeline. Browse local folders and Freesound from one panel, inspect real channel waveforms, select the exact moment you need, shape it with realtime effects, and insert it without breaking your creative flow.
 
 > [!IMPORTANT]
-> Say goodbye to messy project bins! SoundDesigner automatically organizes every inserted or dragged sound into a dedicated `SoundDesigner` folder/bin in your Adobe Project panel, keeping your workspace clean and efficient.
+> No more scattered media. SoundDesigner automatically creates a `SoundDesigner` bin or folder in the Adobe Project panel and organizes every sound inserted through the extension inside it.
+
+### From search to timeline
+
+```text
+Local library + Freesound
+           ↓
+ Search, filter and preview
+           ↓
+ Select a segment and shape it
+           ↓
+ Drag, double-click or Insert
+           ↓
+ Organized SoundDesigner project media
+```
 
 ---
 
 <a id="features"></a>
 
-## 💎 Features
+## 💎 Everything You Need to Design Sound
 
-<table align="center">
+<table>
   <tr>
-    <td align="center" width="50%">
-      <h3>🔍 Deep Library Integration</h3>
-      <p>Recursive sound-library indexing that preserves your original folder hierarchy. Supports WAV, Opus, OGG, FLAC, MP3, AAC, AIFF, and more.</p>
+    <td width="50%" valign="top">
+      <h3>🔍 One Search, Multiple Libraries</h3>
+      <p>Browse preserved local folder trees and optional Freesound results together. Enable either source—or both—from the Library panel.</p>
     </td>
-    <td align="center" width="50%">
-      <h3>☁️ Freesound On-Demand</h3>
-      <p>Search and audition sounds directly from Freesound with built-in CC0, commercial-use, and all-license filters. No web browser needed.</p>
+    <td width="50%" valign="top">
+      <h3>〰️ Real Audio Waveforms</h3>
+      <p>Preview decoded mono and stereo channels, zoom, seek, loop, and see the sound you are actually hearing.</p>
     </td>
   </tr>
   <tr>
-    <td align="center" width="50%">
-      <h3>🎧 Advanced Audio Auditioning</h3>
-      <p>Rich audio previews, looping, decoded multichannel waveform navigation, volume control, favorites, and smart filters.</p>
+    <td width="50%" valign="top">
+      <h3>✂️ Precision Segment Selection</h3>
+      <p>Drag across the waveform, refine the selection, audition only that range, then insert or drag exactly the part you need.</p>
     </td>
-    <td align="center" width="50%">
-      <h3>⚡ Lightning Fast Workflows</h3>
-      <p>Double-click insertion and seamless CEP drag-and-drop support. Includes an After Effects active-composition fallback.</p>
+    <td width="50%" valign="top">
+      <h3>🎛️ Realtime Sound Shaping</h3>
+      <p>Reverse, adjust gain, shift pitch, change speed, or lock pitch while auditioning. The same processing follows the sound into Adobe.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>☁️ Freesound On Demand</h3>
+      <p>Search and preview cloud sounds inside the panel. Files download only when you drag or insert them, with visible progress.</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>⚡ Adobe-Ready Audio</h3>
+      <p>Unsupported audio can be converted to 24-bit PCM WAV automatically, with optional peak normalization and no bundled FFmpeg binary.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🗂️ Project-Smart Organization</h3>
+      <p>Prepared audio is stored beside the saved Adobe project, while imported media stays grouped in a dedicated SoundDesigner bin.</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>📐 Built for Dockable Panels</h3>
+      <p>The interface adapts to wide, compact, short, and vertical layouts while keeping the waveform and essential controls available.</p>
     </td>
   </tr>
 </table>
 
-### Full Feature Highlights
+### More workflow essentials
 
-- **Persistent Libraries:** Collapsed folder trees on startup for quick navigation.
-- **Multi-Tab Searching:** Open multiple independent search tabs simultaneously.
-- **Smart Conversion:** Adobe compatibility policies for unsupported audio, plus optional −1 dBFS peak normalization.
-- **Project-Scoped Storage:** Cloud downloads and converted audio are smartly cached beside each saved Premiere Pro or After Effects project.
-- **Native UI:** Graphite interface designed specifically to blend in with compact Adobe panels.
-- **Update Ready:** Built-in stable GitHub Release update notifications.
-
----
-
-<a id="prerequisites"></a>
-
-## ⚙️ Prerequisites
-
-| Requirement | Notes |
-|---|---|
-| **Adobe Host** | Premiere Pro 15.4+ or After Effects 18.4+ |
-| **CEP Installer** | Any modern ZXP Installer (e.g., Anastasiy's Extension Manager) |
-| **Internet** | Required only for Freesound API features |
+- Recursive local-library indexing with the original folder hierarchy preserved.
+- Multiple independent search tabs, favorites, filters, sorting, and adjustable result density.
+- Auto-preview, looping, channel display controls, waveform zoom, and keyboard navigation.
+- Drag-and-drop, double-click insertion, and a dedicated **Insert** action.
+- Full-sound and selection-only processing without overwriting the source audio.
+- Cached downloads, conversions, waveforms, and rendered segments for faster reuse.
+- Stable update checks that open an explicit download instead of silently replacing the extension.
 
 ---
 
-<a id="installation"></a>
+<a id="get-started"></a>
 
-## 🚀 Installation
+## 🚀 Get Started
 
-1. **Download:** Grab the latest signed `SoundDesigner-vX.Y.Z.zxp` from [GitHub Releases](https://github.com/iboyshanto/SoundDesigner/releases).
-2. **Install:** Use a CEP-compatible ZXP installer to install the extension.
-3. **Launch:** Open SoundDesigner from the **Window > Extensions** menu in Premiere Pro or After Effects.
+### Compatibility
+
+| Requirement | Minimum |
+| --- | --- |
+| **Adobe Premiere Pro** | 15.4 or newer |
+| **Adobe After Effects** | 18.4 or newer |
+| **Adobe extension runtime** | CEP 11 / Chromium 88 |
+| **Installer** | A CEP-compatible ZXP installer |
+| **Internet** | Only for Freesound and update checks |
+
+### Install
+
+1. Download the latest signed `.zxp` from [GitHub Releases](https://github.com/iboyshanto/SoundDesigner/releases/latest).
+2. Install it with a CEP-compatible ZXP installer.
+3. Restart Premiere Pro or After Effects if it was already open.
+4. Open **Window → Extensions** or **Window → Extensions (Legacy)** and choose **SoundDesigner**.
 
 > [!TIP]
-> Always verify Adobe host versions and operating-system combinations against the release notes before deploying to a production environment.
+> Save the Adobe project before using cloud audio, conversion, effects rendering, or segment export. SoundDesigner uses the project location to keep prepared media portable and organized.
+
+### Add a local library
+
+1. Select **Add sound folder** in the Library panel.
+2. Choose the top-level folder containing your sound effects.
+3. Keep **Local** enabled in the source list.
+4. Search, browse the folder tree, and select a sound to preview it.
+5. Drag it into the timeline or composition, double-click it, or select **Insert**.
+
+SoundDesigner indexes nested folders but leaves every original file where it is. Removing a library from the extension never deletes the source folder.
 
 ---
 
-<a id="usage--workflows"></a>
+<a id="preview-select-shape"></a>
 
-## 🎶 Usage & Workflows
+## 🎧 Preview, Select and Shape
 
-### Freesound Setup
+The spectrum preview is a channel-aware waveform editor—not a decorative animation.
 
-Freesound requires an API credential for in-panel searches. **SoundDesigner deliberately does not scrape the website or include a shared API key.** Each user connects their own Freesound account.
+### Select the exact moment
 
-#### 1. Request an API credential
+- Drag horizontally across the waveform to create a selection.
+- Drag either edge to refine the start or end.
+- Playback stays inside the selected range and respects looping.
+- Drag the highlighted range or choose **Insert segment** to use only that moment.
+- Clear the selection to return to the full sound.
 
-1. [Create a Freesound account](https://freesound.org/home/register/) or sign in to an existing account.
-2. Open the [Freesound API credentials page](https://freesound.org/apiv2/apply/).
-3. Under **Create new API credentials**, enter the following values:
+### Shape the sound non-destructively
 
-   | Field | Value |
+| Effect | Control | What it does |
+| --- | --- | --- |
+| **Reverse** | On/off | Reverses the full sound or only the active selection |
+| **Gain** | −24 dB to +12 dB | Raises or lowers the output level |
+| **Pitch** | −12 to +12 semitones | Shifts pitch independently |
+| **Speed** | 0.50× to 2.00× | Changes playback speed and rendered duration |
+| **Pitch Lock** | Locked/unlocked | Preserves pitch while speed changes |
+
+Effects are previewed in realtime and applied consistently when the sound or selected segment is dragged or inserted. **Reset** returns all controls to their neutral values.
+
+### Useful shortcuts
+
+| Key | Action |
+| --- | --- |
+| `Space` | Play or pause the extension preview while focus is inside the panel |
+| `Ctrl+K` / `Cmd+K` | Focus and select the search field |
+| `Escape` | Close the FX rack, settings, drawer, or transient interface |
+| `Enter` on waveform | Create a short selection around the playhead |
+| Arrow keys | Seek or adjust the focused selection handle |
+| `Shift+Arrow` | Make a larger seek or selection adjustment |
+| `Home` / `End` | Move a selection boundary to the beginning or end |
+
+Typing inside an input field is never intercepted by preview shortcuts.
+
+---
+
+<a id="connect-freesound"></a>
+
+## ☁️ Connect Freesound
+
+Freesound is optional. When enabled, Local and Freesound become independent sources in the Library panel, so users can search either one or both at the same time.
+
+SoundDesigner uses the official Freesound API with a personal key. It does not scrape the website and does not ship with a shared credential.
+
+### 1. Create a Freesound credential
+
+1. [Create a Freesound account](https://freesound.org/home/register/) or sign in.
+2. Open the [API credentials page](https://freesound.org/apiv2/apply/).
+3. Create a credential using:
+
+   | Field | Suggested value |
    | --- | --- |
    | **Name** | `SoundDesigner` |
    | **URL** | `https://github.com/iboyshanto/SoundDesigner` |
    | **Callback URL** | `http://freesound.org/home/app_permissions/permission_granted/` |
 
-   SoundDesigner uses token authentication rather than an OAuth2 login flow, so it does not receive callback requests. The Freesound-hosted callback above is the fallback provided for desktop and non-server applications.
-4. Submit the form and wait for the credential to appear in the table at the top of the page.
+   SoundDesigner uses token authentication, not an OAuth2 login flow. The callback is the Freesound-provided fallback for desktop and non-server applications.
+4. Submit the form and find the new credential in the table.
 
-#### 2. Copy the correct value
+### 2. Copy the correct key
 
-Copy the long value under **Client secret/API key**. Do **not** copy the shorter **Client ID**—SoundDesigner needs the API key.
+Copy the long value under **Client secret/API key**—not the shorter **Client ID**.
 
-Treat the API key like a password:
+Treat the key like a password:
 
-- Do not post it in screenshots, issues, or discussions.
-- Do not commit it to this repository.
-- Do not share one key between distributed copies of the extension.
-- If it is exposed, delete or regenerate the credential from Freesound.
+- Do not commit it to the repository.
+- Do not share it in screenshots, issues, or discussions.
+- Do not bundle one personal key with public builds.
+- Revoke or regenerate it if it becomes exposed.
 
-#### 3. Connect SoundDesigner
+### 3. Enable Freesound in SoundDesigner
 
-1. Open SoundDesigner in Premiere Pro or After Effects.
-2. Open **Settings** and find the **Freesound** section.
-3. Enable **Freesound library**.
-4. Paste the value from **Client secret/API key** into **Personal API key**.
-5. Select the desired license filter and click **Save changes**.
-6. In the Library panel, enable **Freesound**. Keep **Local** enabled if both sources should be searched together.
-7. Enter at least two characters in Search. Cloud results should appear with the cloud source icon.
+1. Open **Settings → Freesound**.
+2. Enable **Freesound library**.
+3. Paste the **Client secret/API key** into **Personal API key**.
+4. Choose a license filter and select **Save changes**.
+5. Enable **Freesound** in the Library panel.
+6. Enter at least two search characters.
 
-#### Authentication and licensing
-
-- SoundDesigner uses Freesound's token-authenticated, read-only search and preview workflow; OAuth2 authorization is not required.
-- Freesound API access is free for non-commercial use. Commercial API use requires separate permission or licensing from Freesound.
-- Every sound retains its own license. A CC0 result and a CC BY result do not have the same attribution requirements.
-- The selected license filter applies to cloud searches, but users remain responsible for checking the license shown for each sound.
-
-> [!NOTE]
-> Disabling the Freesound library stops cloud requests while retaining your key. You can also browse Freesound without a key via your default browser using the **Browse without key** setting.
-> 
-> Results and low-bandwidth waveform previews are requested only while the Freesound source is active and a search is entered. Audio is downloaded only when the user explicitly downloads, inserts, or prepares a drag. See the official [authentication documentation](https://freesound.org/docs/api/authentication.html) and [API terms](https://freesound.org/help/tos_api/).
-
-#### Troubleshooting
-
-- **No Freesound source in the Library panel:** Enable **Freesound library** in Settings and save the changes.
-- **No cloud results:** Confirm Freesound is checked in the Library panel, enter at least two search characters, and verify the API key was copied without surrounding spaces.
-- **Unauthorized or invalid-key error:** Return to the credentials page and copy **Client secret/API key**, not **Client ID**.
-- **Local results only:** Both sources can be enabled independently; make sure the Freesound source checkbox is active.
-- **Commercial project:** Contact Freesound for API permission before using the integration commercially, then review the license of every selected sound.
-
-### Project Audio & Conversion
-
-Used cloud audio is stored securely under `Project folder/SoundDesigner/Project name/Freesound/Originals`. Compatibility and normalized WAVs are cached under `Project folder/SoundDesigner/Project name/Converted`, with provenance and conversion records in `Metadata`. 
-
-- **Conversion Engine:** The lightweight converter uses available CEP decoders to write 24-bit PCM WAV (no FFmpeg required). 
-- **Integrity:** Sample rate and channel counts are preserved. Peak normalization applies uniform gain across all channels.
-- **Important:** Always save your Adobe project before preparing cloud or converted audio.
-
-### Waveform Segment Selection
-
-Need just a specific slice of a sound? 
-- **Select:** Drag horizontally across the spectrum preview.
-- **Refine:** Drag the edges. Use arrow keys for fine adjustments, `Shift+Arrow` for larger steps, and `Home`/`End` to reach boundaries.
-- **Insert:** Click **Insert segment** or drag the blue selection. SoundDesigner renders and caches just that segment as a 24-bit PCM WAV.
+**Browse without key** opens Freesound in the default browser. Searching and previewing Freesound inside the panel requires a personal API credential.
 
 > [!WARNING]
-> Freesound sounds retain their individual Creative Commons licenses. CC BY sounds require attribution, and Freesound requires separate permission for commercial use of its API. Review the [Freesound API terms](https://freesound.org/help/tos_api/) before distributing a commercial build.
+> Every Freesound item keeps its own Creative Commons license. CC BY sounds require attribution. Free API access is for non-commercial use; commercial API use must be arranged with Freesound/UPF. Read the official [authentication guide](https://freesound.org/docs/api/authentication.html) and [API terms](https://freesound.org/help/tos_api/).
+
+---
+
+<a id="project-audio-conversion"></a>
+
+## 🗂️ Project Audio and Conversion
+
+Directly supported local audio can be inserted from its original location. When a cloud download, conversion, normalization, effect, or selected segment needs a new file, SoundDesigner stores it beside the saved Adobe project:
+
+```text
+<Project folder>/
+└── SoundDesigner/
+    └── <Project name>/
+        ├── Freesound/
+        │   └── Originals/
+        ├── Converted/
+        ├── Segments/
+        └── Metadata/
+```
+
+| Folder | Purpose |
+| --- | --- |
+| `Freesound/Originals` | Provider previews downloaded only when needed |
+| `Converted` | Adobe-compatible, normalized, or effect-processed WAV files |
+| `Segments` | Rendered waveform selections |
+| `Metadata` | Source, license, conversion, processing, and selection records |
+
+Prepared filenames use stable fingerprints so valid outputs can be reused without collisions between projects or processing settings.
+
+### Conversion options
+
+- **Convert unsupported audio to WAV** — recommended; prepares only formats outside the direct Adobe compatibility list.
+- **Always convert imported audio to WAV** — creates a project-scoped WAV for every sound.
+- **Never convert automatically** — passes the original file to Adobe, which may reject unsupported audio.
+- **Preserve original level** — keeps the decoded source level.
+- **Peak normalize to −1 dBFS** — applies one consistent gain value across all channels.
+
+Converted output is 24-bit PCM WAV with its sample rate and channel count preserved. Temporary files are finalized atomically so cancelled or failed work does not look complete.
+
+> [!NOTE]
+> SoundDesigner recognizes many common audio extensions, including WAV, AIFF, MP3, AAC/M4A, FLAC, OGG, Opus, WMA, APE, and WebM audio. Actual preview and conversion still depend on the audio decoders available in CEP 11; an uncommon codec that cannot be decoded is reported instead of being imported as an invalid file.
+
+---
+
+<a id="settings"></a>
+
+## ⚙️ Settings at a Glance
+
+| Setting | Purpose |
+| --- | --- |
+| **Auto-preview selection** | Starts auditioning when the selected result changes |
+| **Loop previews** | Keeps playback running until stopped or another sound is chosen |
+| **Playhead / selected clip** | Chooses where Adobe places inserted audio |
+| **Adobe compatibility** | Controls automatic WAV conversion |
+| **Normalization** | Preserves the source level or peak-normalizes prepared audio |
+| **Enable Freesound library** | Adds or removes the optional cloud source |
+| **License filter** | Restricts Freesound searches to the chosen license group |
+| **Updates** | Checks stable GitHub Releases without installing silently |
 
 ---
 
@@ -207,40 +321,101 @@ Need just a specific slice of a sound?
 
 ## 🛠️ Development
 
-SoundDesigner's panel uses **Svelte 5** and is compiled for the Chromium 88 runtime in CEP 11. Host-side code is bundled separately for ExtendScript/ES3 compatibility.
+The panel is built with **Svelte 5** and **Vite** through the **Bolt CEP** toolchain. Host integrations are compiled separately for ExtendScript/ES3 compatibility.
 
-**Requirements:** `Bun 1.3+` and `Node.js` for CEP release tooling.
+**Requirements:** Bun 1.3+ and Node.js compatibility for CEP packaging and release utilities.
 
 ```sh
-# Install dependencies
+# Install the locked dependencies
 bun install --frozen-lockfile
 
-# Build the project
-bun run build
+# Start the development server
+bun run dev
 
-# Watch mode for active development
-bun run watch
+# Type-check the Svelte application
+bun run check
+
+# Test audio effects and WAV rendering
+bun run test:audio
+
+# Compile the CEP extension
+bun run build
 ```
+
+### Project map
+
+| Path | Responsibility |
+| --- | --- |
+| `src/js/main` | Svelte UI, libraries, waveform, Freesound, conversion, and processing |
+| `src/jsx/ppro` | Premiere Pro host integration |
+| `src/jsx/aeft` | After Effects host integration |
+| `scripts` | Audio smoke tests, certificate creation, and release packaging |
+| `cep.config.ts` | CEP hosts, runtime floor, manifest, and build configuration |
+| `.github/workflows/main.yml` | Tagged signed-ZXP release automation |
 
 ---
 
-<a id="publishing-updates"></a>
+<a id="publishing"></a>
 
-## 📦 Publishing Updates
+## 📦 Publishing
 
-Production releases must use a persistent publisher certificate. The extension never silently executes downloaded code—it simply checks for updates and directs users to the repository.
+Production releases require a persistent publisher certificate.
 
 ```sh
-# One-time, secure publisher setup
+# Create a persistent local certificate once
 bun run certificate:create
 
-# Build the signed ZXP and checksum
+# Test, build, sign, and generate the SHA-256 checksum
 bun run release:package
 ```
 
-The certificate is stored under the Git-ignored `.signing` directory, and its password is requested through a hidden terminal prompt rather than saved to disk.
+GitHub Actions can publish tagged releases when `SOUNDDESIGNER_ZXP_CERT_BASE64` and `SOUNDDESIGNER_ZXP_PASSWORD` are configured as repository secrets. See [RELEASING.md](RELEASING.md) for the complete release checklist.
 
-Please refer to [`RELEASING.md`](RELEASING.md) for the complete signing, testing, tagging, and publishing procedure.
+---
+
+<a id="troubleshooting"></a>
+
+## 🧰 Troubleshooting
+
+<details>
+<summary><strong>Cloud audio or conversion says the project must be saved</strong></summary>
+
+Save the Premiere Pro or After Effects project and retry. Project-scoped audio needs a stable project directory.
+</details>
+
+<details>
+<summary><strong>Freesound does not appear in the Library panel</strong></summary>
+
+Enable **Freesound library** in Settings, enter a valid personal API key, save, and then enable the Freesound source in the Library panel.
+</details>
+
+<details>
+<summary><strong>Only local or only cloud results appear</strong></summary>
+
+Local and Freesound are independent switches. Enable both in the Library panel to search both sources together.
+</details>
+
+<details>
+<summary><strong>A format is indexed but will not preview or convert</strong></summary>
+
+Indexing and decoding are different steps. Keep **Convert unsupported audio to WAV** enabled. If CEP cannot decode the source, convert it externally to WAV, AIFF, MP3, AAC, or M4A and rescan the library.
+</details>
+
+<details>
+<summary><strong>Inserted audio is missing from the SoundDesigner bin</strong></summary>
+
+Confirm that an Adobe project—and, in After Effects, an active composition—is open. Retry with **Insert** so the host integration can create the bin or folder.
+</details>
+
+---
+
+## 🔒 Respectful by Design
+
+- Original local audio is never overwritten by conversion or effects.
+- Freesound credentials are user-provided preferences and are never committed by the project.
+- Cloud downloads are limited to trusted Freesound HTTPS hosts and use bounded file sizes.
+- Interrupted temporary downloads and renders are cleaned up.
+- Updates are explicit: SoundDesigner never silently replaces the installed extension.
 
 ---
 
@@ -248,8 +423,10 @@ Please refer to [`RELEASING.md`](RELEASING.md) for the complete signing, testing
 
 ## 📜 License
 
-Distributed under the MIT License. See [LICENSE](LICENSE) for more information.
+SoundDesigner is distributed under the [MIT License](LICENSE).
+
+Freesound content is not covered by the SoundDesigner license. Each downloaded sound remains subject to its own license and attribution requirements.
 
 <div align="center">
-  <sub>Built with passion for the Adobe creative community.</sub>
+  <strong>Built for editors who want to spend more time designing sound—and less time managing files.</strong>
 </div>

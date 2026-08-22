@@ -20,14 +20,17 @@
     organizeAudioInHost,
     type AfterEffectsAudioDragState,
   } from "./hostBridge";
-  import { openLinkInBrowser } from "../lib/utils/bolt";
-  import { decodeAudioWaveformChannels, decodeRemoteAudioWaveformChannels } from "./audioWaveform";
+  import { csi, openLinkInBrowser } from "../lib/utils/bolt";
+  import { decodeAudioWaveformChannels, decodeRemoteAudioWaveformChannels, renderProcessedPreview } from "./audioWaveform";
+  import { audioProcessingKey, DEFAULT_AUDIO_PROCESSING, hasAudioProcessing, normalizeAudioProcessing } from "./audioEffects";
   import { searchFreesound } from "./freesound";
   import { prepareAudioForHost, prepareAudioSegmentForHost, requiresProjectAudioPreparation } from "./projectAudio";
   import { checkForUpdates, dismissUpdate, INSTALLED_VERSION, isUpdateDismissed, type UpdateState } from "./updater";
   import type {
     AudioConversionPolicy,
     AudioNormalization,
+    AudioProcessingSettings,
+    AudioPreparationStatus,
     AudioSegmentSelection,
     FreesoundLicenseFilter,
     InsertionTarget,
@@ -62,6 +65,7 @@
   const LIBRARY_MIN_WIDTH = 180;
   const LIBRARY_MAX_WIDTH = 560;
   const RESULTS_MIN_WIDTH = 320;
+  const EMPTY_WAVEFORM_CHANNELS: Float32Array[] = [];
   const resultRowHeightForViewport = (compact = true) => {
     if (typeof window === "undefined") return 57;
     if (!compact) return 69;
@@ -142,6 +146,15 @@
     baseline: Promise<AfterEffectsAudioDragState>;
     leftPanel: boolean;
     cancelled: boolean;
+  };
+
+  type PreparationDragSession = {
+    id: number;
+    soundId: string;
+    promise: Promise<SoundFile>;
+    leftPanel: boolean;
+    cancelled: boolean;
+    announced: boolean;
   };
 
   const loadPreferences = (): SoundDesignerPreferences => {
@@ -251,10 +264,13 @@
   let compactResults = $state(true);
   let playing = $state(false);
   let progress = $state(0);
-  let volume = $state(0.78);
+  let processing = $state<AudioProcessingSettings>({ ...DEFAULT_AUDIO_PROCESSING });
+  let processingPreviewUrl = $state("");
+  let processingPreviewScope = $state<AudioSegmentSelection | null>(null);
+  let processingPreviewBusy = $state(false);
+  let processingPreviewError = $state("");
   let loop = $state(preferences.loop);
   let insertionTarget = $state<InsertionTarget>(preferences.insertionTarget);
-  let reversed = $state(false);
   let zoom = $state(1);
   let previewChannels = $state<Float32Array[]>([]);
   let waveformChannelsLoading = $state(false);
@@ -274,6 +290,7 @@
   let freesoundApiKey = $state(preferences.freesoundApiKey);
   let freesoundLicenseFilter = $state<FreesoundLicenseFilter>(preferences.freesoundLicenseFilter);
   let toasts = $state<ToastMessage[]>([]);
+  let soundPreparation = $state<Record<string, AudioPreparationStatus | undefined>>({});
   let updateState = $state<UpdateState>({ status: "idle", currentVersion: INSTALLED_VERSION });
   let updateDismissed = $state(false);
   let floatingTooltip = $state<{ text: string; x: number; y: number; above: boolean } | null>(null);
@@ -286,9 +303,15 @@
   let pendingResultsScrollTop = 0;
   let resultsScrollFrame = 0;
   let libraryWidth = $state(loadLibraryWidth());
+  let effectsOpen = $state(false);
 
   let audio: HTMLAudioElement | null = null;
+  let audioPreviewScope: AudioSegmentSelection | null = null;
+  let audioUsesProcessedPreview = false;
+  let audioSoundId = "";
   let pendingPlayId: string | null = null;
+  let sourceSwapWasPlaying = false;
+  let sourceSwapProgress = 0;
   let toastId = 0;
   let tooltipTimer: number | null = null;
   let tooltipHideTimer: number | null = null;
@@ -297,17 +320,42 @@
   let librarySyncInitialized = false;
   let afterEffectsDragSession: AfterEffectsDragSession | null = null;
   let afterEffectsDragSessionId = 0;
+  let preparationDragSession: PreparationDragSession | null = null;
+  let preparationDragSessionId = 0;
+  let segmentDragPreparation: Promise<SoundFile | null> | null = null;
+  let segmentDragLeftPanel = false;
+  let segmentDragCancelled = false;
   let activeProjectPath = "";
   let freesoundSearchController: AbortController | null = null;
   let freesoundSearchGeneration = 0;
   let segmentPreparationGeneration = 0;
+  let processingPreparationTimer = 0;
   const freesoundSessionCache = new Map<string, SoundFile>();
   const preparingSounds = new Map<string, Promise<SoundFile>>();
+  const preparedProcessingCache = new Map<string, SoundFile>();
   const preparedSegmentCache = new Map<string, SoundFile>();
   const soundSearchTextCache = new WeakMap<SoundFile, string>();
   let segmentPreparationController: AbortController | null = null;
   let activeSegmentPreparationKey = "";
   let activeSegmentPreparation: Promise<SoundFile> | null = null;
+
+  const cachePreparedProcessing = (key: string, sound: SoundFile) => {
+    // Continuous slider adjustments can produce many distinct profiles. Keep
+    // the UI cache bounded; rendered files remain in project storage.
+    preparedProcessingCache.delete(key);
+    preparedProcessingCache.set(key, sound);
+    while (preparedProcessingCache.size > 32) {
+      const oldestKey = preparedProcessingCache.keys().next().value;
+      if (typeof oldestKey !== "string") break;
+      preparedProcessingCache.delete(oldestKey);
+    }
+  };
+
+  const getCachedProcessing = (key: string) => {
+    const cached = preparedProcessingCache.get(key);
+    if (cached) cachePreparedProcessing(key, cached);
+    return cached;
+  };
 
   const cancelSegmentPreparation = () => {
     segmentPreparationController?.abort();
@@ -428,6 +476,8 @@
     event.stopPropagation();
     const startX = event.clientX;
     const startWidth = libraryWidth;
+    let pendingWidth = startWidth;
+    let resizeFrame = 0;
     let finished = false;
     let move: (nextEvent: MouseEvent) => void;
     document.documentElement.classList.add("is-resizing-library");
@@ -435,6 +485,11 @@
     const finish = () => {
       if (finished) return;
       finished = true;
+      if (resizeFrame) {
+        window.cancelAnimationFrame(resizeFrame);
+        resizeFrame = 0;
+        setLibraryWidth(pendingWidth);
+      }
       saveLibraryWidth(libraryWidth);
       document.documentElement.classList.remove("is-resizing-library");
       window.removeEventListener("mousemove", move, true);
@@ -447,7 +502,12 @@
         return;
       }
       nextEvent.preventDefault();
-      setLibraryWidth(startWidth + nextEvent.clientX - startX);
+      pendingWidth = startWidth + nextEvent.clientX - startX;
+      if (resizeFrame) return;
+      resizeFrame = window.requestAnimationFrame(() => {
+        resizeFrame = 0;
+        setLibraryWidth(pendingWidth);
+      });
     };
     window.addEventListener("mousemove", move, true);
     window.addEventListener("mouseup", finish, true);
@@ -512,12 +572,11 @@
 
   const togglePlay = () => {
     if ((!selected?.path && !selected?.previewUrl) || !audio) return;
-    if (playing) {
+    if (!audio.paused) {
       audio.pause();
-      playing = false;
       return;
     }
-    if (segmentSelection && audio.duration) {
+    if (!audioUsesProcessedPreview && segmentSelection && audio.duration) {
       const start = Math.max(0, Math.min(audio.duration, segmentSelection.start));
       const end = Math.max(start, Math.min(audio.duration, segmentSelection.end));
       if (audio.currentTime < start || audio.currentTime >= end - 0.01) {
@@ -525,17 +584,31 @@
         progress = start / audio.duration;
       }
     }
-    if (reversed) notify("warning", "Reverse audition is queued for the non-destructive render engine; forward preview is playing.");
-    audio.play().then(() => { playing = true; }).catch(() => notify("error", "Audio preview could not start."));
+    if (audioUsesProcessedPreview && audio.currentTime >= audio.duration - 0.01) audio.currentTime = 0;
+    audio.play().catch(() => {
+      playing = false;
+      notify("error", "Audio preview could not start.");
+    });
   };
 
-  const stopPlayback = (playbackWasReversed = reversed) => {
+  const stopPlayback = () => {
     if (audio) {
       audio.pause();
-      audio.currentTime = segmentSelection?.start || 0;
+      audio.currentTime = audioUsesProcessedPreview ? 0 : segmentSelection?.start || 0;
     }
     playing = false;
-    progress = playbackWasReversed ? 1 : (selected?.duration ? (segmentSelection?.start || 0) / selected.duration : 0);
+    progress = selected?.duration ? (audioPreviewScope?.start || segmentSelection?.start || 0) / selected.duration : 0;
+  };
+
+  const updateProcessing = (patch: Partial<AudioProcessingSettings>) => {
+    processing = normalizeAudioProcessing({ ...processing, ...patch });
+    preparedSegment = null;
+    cancelSegmentPreparation();
+    window.clearTimeout(processingPreparationTimer);
+    const activeSelection = segmentSelection ? { ...segmentSelection } : null;
+    if (activeSelection && window.cep && host !== "browser") {
+      processingPreparationTimer = window.setTimeout(() => prepareSelectedSegment(activeSelection, false), 320);
+    }
   };
 
   $effect(() => savePreferences(
@@ -550,8 +623,7 @@
     freesoundApiKey,
     freesoundLicenseFilter,
   ));
-  $effect(() => { if (audio) audio.volume = volume; });
-  $effect(() => { if (audio) audio.loop = segmentSelection ? false : loop; });
+  $effect(() => { if (audio) audio.loop = loop && (audioUsesProcessedPreview || !segmentSelection); });
   $effect(() => {
     const current = selected;
     previewChannels = [];
@@ -599,6 +671,77 @@
       return;
     }
     if (!selectedId || !visibleSounds.some((sound) => sound.id === selectedId)) selectedId = visibleSounds[0].id;
+  });
+
+  $effect(() => {
+    selectedId;
+    untrack(() => {
+      processing = { ...DEFAULT_AUDIO_PROCESSING };
+      if (processingPreviewUrl) URL.revokeObjectURL(processingPreviewUrl);
+      processingPreviewUrl = "";
+      processingPreviewScope = null;
+      processingPreviewBusy = false;
+      processingPreviewError = "";
+    });
+  });
+
+  $effect(() => {
+    const current = selected;
+    const profile = audioProcessingKey(processing);
+    const active = hasAudioProcessing(processing);
+    const scope = segmentSelection ? { ...segmentSelection } : null;
+    const scopeKey = scope ? `${scope.start.toFixed(4)}:${scope.end.toFixed(4)}` : "full";
+    profile;
+    scopeKey;
+    let cancelled = false;
+    let generatedUrl = "";
+    let controller: AbortController | null = null;
+    let timer = 0;
+    untrack(() => {
+      processingPreviewBusy = Boolean(active && current && (current.path || current.previewUrl));
+      processingPreviewError = "";
+      if (!active || !current) {
+        const retiredUrl = processingPreviewUrl;
+        processingPreviewUrl = "";
+        processingPreviewScope = null;
+        if (retiredUrl) window.setTimeout(() => URL.revokeObjectURL(retiredUrl), 1200);
+      }
+    });
+    if (!active || !current || (!current.path && !current.previewUrl)) return;
+    timer = window.setTimeout(async () => {
+      controller = new AbortController();
+      try {
+        const rendered = await renderProcessedPreview(current, scope, processing, controller.signal);
+        generatedUrl = rendered.url;
+        if (cancelled || selectedId !== current.id || audioProcessingKey(processing) !== profile) {
+          URL.revokeObjectURL(generatedUrl);
+          generatedUrl = "";
+          return;
+        }
+        const retiredUrl = processingPreviewUrl;
+        processingPreviewUrl = generatedUrl;
+        generatedUrl = "";
+        processingPreviewScope = scope;
+        processingPreviewBusy = false;
+        if (retiredUrl) window.setTimeout(() => URL.revokeObjectURL(retiredUrl), 1200);
+      } catch (error) {
+        const aborted = controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError");
+        if (!aborted && !cancelled) {
+          const retiredUrl = processingPreviewUrl;
+          processingPreviewUrl = "";
+          processingPreviewScope = null;
+          processingPreviewBusy = false;
+          processingPreviewError = error instanceof Error ? error.message : "The processed preview could not be rendered.";
+          if (retiredUrl) window.setTimeout(() => URL.revokeObjectURL(retiredUrl), 1200);
+        }
+      }
+    }, 80);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      controller?.abort();
+      if (generatedUrl) URL.revokeObjectURL(generatedUrl);
+    };
   });
 
   $effect(() => {
@@ -668,16 +811,30 @@
 
   $effect(() => {
     const id = selectedId;
+    const renderedPreviewUrl = processingPreviewUrl;
+    const renderedPreviewScope = processingPreviewScope;
     const currentSelected = untrack(() => sounds.find((sound) => sound.id === id) || freesoundSounds.find((sound) => sound.id === id) || null);
+    const soundChanged = audioSoundId !== id;
+    const shouldResume = !soundChanged && sourceSwapWasPlaying;
+    const retainedProgress = !soundChanged ? sourceSwapProgress : 0;
+    sourceSwapWasPlaying = false;
+    sourceSwapProgress = 0;
     if (audio) {
       audio.pause();
       audio = null;
     }
-    playing = false;
-    progress = 0;
-    segmentSelection = null;
-    preparedSegment = null;
-    cancelSegmentPreparation();
+    playing = shouldResume;
+    progress = retainedProgress;
+    if (soundChanged) {
+      audioSoundId = id;
+      playing = false;
+      progress = 0;
+      segmentSelection = null;
+      preparedSegment = null;
+      cancelSegmentPreparation();
+    }
+    audioPreviewScope = null;
+    audioUsesProcessedPreview = false;
 
     const startPendingPreview = () => {
       if (currentSelected && pendingPlayId === currentSelected.id) {
@@ -685,18 +842,30 @@
         window.setTimeout(togglePlay, 0);
       }
     };
-    const previewSource = currentSelected?.path ? fileUrl(currentSelected.path) : currentSelected?.previewUrl || "";
+    const previewSource = renderedPreviewUrl || (currentSelected?.path ? fileUrl(currentSelected.path) : currentSelected?.previewUrl || "");
     if (!previewSource) {
       startPendingPreview();
       return;
     }
 
     const nextAudio = new Audio(previewSource);
+    const usesProcessedPreview = Boolean(renderedPreviewUrl);
+    const activePreviewScope = usesProcessedPreview ? renderedPreviewScope : null;
+    audioPreviewScope = activePreviewScope;
+    audioUsesProcessedPreview = usesProcessedPreview;
+    let playbackFrame = 0;
     nextAudio.preload = "metadata";
-    nextAudio.volume = untrack(() => volume);
-    nextAudio.loop = untrack(() => loop && !segmentSelection);
+    nextAudio.volume = 1;
+    nextAudio.loop = untrack(() => loop && (usesProcessedPreview || !segmentSelection));
     const onTimeUpdate = () => {
       if (!nextAudio.duration) return;
+      if (usesProcessedPreview) {
+        if (activePreviewScope && currentSelected?.duration) {
+          const ratio = Math.max(0, Math.min(1, nextAudio.currentTime / nextAudio.duration));
+          progress = (activePreviewScope.start + ratio * (activePreviewScope.end - activePreviewScope.start)) / currentSelected.duration;
+        } else progress = nextAudio.currentTime / nextAudio.duration;
+        return;
+      }
       const activeSelection = segmentSelection;
       if (activeSelection && nextAudio.currentTime < activeSelection.start - 0.008) {
         nextAudio.currentTime = activeSelection.start;
@@ -718,21 +887,69 @@
       }
       progress = nextAudio.currentTime / nextAudio.duration;
     };
+    const stopPlaybackFrame = () => {
+      if (!playbackFrame) return;
+      window.cancelAnimationFrame(playbackFrame);
+      playbackFrame = 0;
+    };
+    const updatePlaybackFrame = () => {
+      playbackFrame = 0;
+      if (audio !== nextAudio || nextAudio.paused || nextAudio.ended) return;
+      onTimeUpdate();
+      playbackFrame = window.requestAnimationFrame(updatePlaybackFrame);
+    };
+    const startPlaybackFrame = () => {
+      if (!playbackFrame) playbackFrame = window.requestAnimationFrame(updatePlaybackFrame);
+    };
     const onLoadedMetadata = () => {
       if (
         currentSelected
         &&
         Number.isFinite(nextAudio.duration)
         && nextAudio.duration > 0
+        && !usesProcessedPreview
         && currentSelected.duration !== nextAudio.duration
       ) currentSelected.duration = nextAudio.duration;
+      if (!soundChanged && retainedProgress > 0 && Number.isFinite(nextAudio.duration) && nextAudio.duration > 0) {
+        if (activePreviewScope && currentSelected?.duration) {
+          const sourceTime = retainedProgress * currentSelected.duration;
+          const ratio = (sourceTime - activePreviewScope.start) / Math.max(0.001, activePreviewScope.end - activePreviewScope.start);
+          nextAudio.currentTime = Math.max(0, Math.min(nextAudio.duration, ratio * nextAudio.duration));
+        } else nextAudio.currentTime = Math.max(0, Math.min(nextAudio.duration, retainedProgress * nextAudio.duration));
+      }
+      if (shouldResume && audio === nextAudio) {
+        nextAudio.play().catch(() => {
+          if (audio === nextAudio) playing = false;
+          notify("error", "Audio preview could not resume after updating effects.");
+        });
+      }
     };
-    const onEnded = () => { if (!nextAudio.loop) { playing = false; progress = 1; } };
+    const onPlay = () => {
+      if (audio !== nextAudio) return;
+      playing = true;
+      startPlaybackFrame();
+    };
+    const onPause = () => {
+      if (audio !== nextAudio) return;
+      stopPlaybackFrame();
+      if (!nextAudio.ended) playing = false;
+    };
+    const onEnded = () => {
+      stopPlaybackFrame();
+      if (!nextAudio.loop) {
+        playing = false;
+        progress = activePreviewScope && currentSelected?.duration ? activePreviewScope.end / currentSelected.duration : 1;
+      }
+    };
     const onError = () => {
-      if (audio !== nextAudio || !nextAudio.paused || nextAudio.currentTime > 0) return;
+      if (audio !== nextAudio) return;
+      playing = false;
+      if (!nextAudio.paused || nextAudio.currentTime > 0) return;
       notify("error", "This audio format could not be previewed by CEP.");
     };
     nextAudio.addEventListener("timeupdate", onTimeUpdate);
+    nextAudio.addEventListener("play", onPlay);
+    nextAudio.addEventListener("pause", onPause);
     nextAudio.addEventListener("loadedmetadata", onLoadedMetadata);
     nextAudio.addEventListener("ended", onEnded);
     nextAudio.addEventListener("error", onError);
@@ -741,11 +958,22 @@
 
     return () => {
       nextAudio.removeEventListener("timeupdate", onTimeUpdate);
+      nextAudio.removeEventListener("play", onPlay);
+      nextAudio.removeEventListener("pause", onPause);
       nextAudio.removeEventListener("loadedmetadata", onLoadedMetadata);
       nextAudio.removeEventListener("ended", onEnded);
       nextAudio.removeEventListener("error", onError);
+      stopPlaybackFrame();
+      if (audio === nextAudio) {
+        sourceSwapWasPlaying = !nextAudio.paused && !nextAudio.ended;
+        sourceSwapProgress = progress;
+      }
       nextAudio.pause();
-      if (audio === nextAudio) audio = null;
+      if (audio === nextAudio) {
+        audio = null;
+        audioPreviewScope = null;
+        audioUsesProcessedPreview = false;
+      }
       nextAudio.removeAttribute("src");
       nextAudio.load();
     };
@@ -812,6 +1040,7 @@
           freesoundSessionCache.set(id, resetPreparedSound(cachedSound));
         }
         preparedSegmentCache.clear();
+        preparedProcessingCache.clear();
         preparedSegment = null;
         cancelSegmentPreparation();
       }
@@ -879,20 +1108,44 @@
   });
 
   onMount(() => {
+    // CEP forwards unclaimed keys to Premiere/After Effects. Claim Space only;
+    // text fields still opt out below so typing remains native.
+    try {
+      if ("cep" in window) {
+        csi.registerKeyEventsInterest(JSON.stringify([{
+          keyCode: 32,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+          metaKey: false,
+        }]));
+      }
+    } catch (_error) {
+      // Browser preview and older CEP shells keep the DOM fallback below.
+    }
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      const editing = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      const editing = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         searchInput?.focus();
         searchInput?.select();
       } else if (event.key === "Escape") {
+        if (effectsOpen) {
+          effectsOpen = false;
+          window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(".effects-button")?.focus());
+          return;
+        }
         if (afterEffectsDragSession) afterEffectsDragSession.cancelled = true;
+        if (preparationDragSession) preparationDragSession.cancelled = true;
+        if (segmentDragPreparation) segmentDragCancelled = true;
         settingsOpen = false;
         sidebarOpen = false;
         compactPreviewOpen = false;
       } else if (event.code === "Space" && !editing) {
         event.preventDefault();
+        event.stopImmediatePropagation();
+        if (event.repeat) return;
         togglePlay();
       }
     };
@@ -902,12 +1155,12 @@
       pendingPlayId = null;
       stopPlayback();
     };
-    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("blur", handOffPreviewToHost);
     document.addEventListener("dragenter", markDragInsidePanel);
     document.addEventListener("dragleave", markDragOutsidePanel);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("blur", handOffPreviewToHost);
       document.removeEventListener("dragenter", markDragInsidePanel);
       document.removeEventListener("dragleave", markDragOutsidePanel);
@@ -997,11 +1250,17 @@
   });
 
   const seek = (nextProgress: number) => {
-    const duration = audio?.duration || selected?.duration || 0;
-    const minimum = segmentSelection && duration > 0 ? segmentSelection.start / duration : 0;
-    const maximum = segmentSelection && duration > 0 ? segmentSelection.end / duration : 1;
+    const sourceDuration = selected?.duration || 0;
+    const minimum = segmentSelection && sourceDuration > 0 ? segmentSelection.start / sourceDuration : 0;
+    const maximum = segmentSelection && sourceDuration > 0 ? segmentSelection.end / sourceDuration : 1;
     progress = Math.max(minimum, Math.min(maximum, nextProgress));
-    if (audio?.duration) audio.currentTime = progress * audio.duration;
+    if (audio?.duration) {
+      if (audioUsesProcessedPreview && audioPreviewScope && sourceDuration > 0) {
+        const sourceTime = progress * sourceDuration;
+        const ratio = (sourceTime - audioPreviewScope.start) / Math.max(0.001, audioPreviewScope.end - audioPreviewScope.start);
+        audio.currentTime = Math.max(0, Math.min(audio.duration, ratio * audio.duration));
+      } else audio.currentTime = progress * audio.duration;
+    }
   };
 
   const segmentRequestKey = (sound: SoundFile, selection: AudioSegmentSelection) => [
@@ -1010,6 +1269,7 @@
     sound.size,
     sound.modifiedAt,
     `${conversionPolicy}:${normalization}`,
+    audioProcessingKey(processing),
     Math.round(selection.start * 1000),
     Math.round(selection.end * 1000),
   ].join("|");
@@ -1054,6 +1314,7 @@
         project,
         conversionPolicy,
         normalization,
+        processing,
         signal: controller.signal,
       });
       preparedSegmentCache.set(key, prepared.sound);
@@ -1118,35 +1379,78 @@
 
   const toggleFavorite = (sound: SoundFile) => updateSoundRecord({ ...sound, favorite: !sound.favorite });
 
+  const updatePreparationStatus = (
+    sound: SoundFile,
+    stage: AudioPreparationStatus["stage"],
+    message: string,
+    nextProgress?: number,
+  ) => {
+    soundPreparation[sound.id] = {
+      stage,
+      message,
+      progress: Number.isFinite(nextProgress) ? Math.max(0, Math.min(1, Number(nextProgress))) : undefined,
+    };
+  };
+
+  const clearPreparationStatus = (soundId: string) => {
+    delete soundPreparation[soundId];
+  };
+
+  const processingCacheKey = (sound: SoundFile, requestedProcessing: AudioProcessingSettings, projectPath = activeProjectPath) => [
+    sound.id,
+    sound.path,
+    sound.size,
+    sound.modifiedAt,
+    `${conversionPolicy}:${normalization}:${audioProcessingKey(requestedProcessing)}`,
+    projectPath,
+  ].join("|");
+
   const prepareSound = async (sound: SoundFile) => {
-    const existing = preparingSounds.get(sound.id);
-    if (existing) return existing;
     const requestedConversionPolicy = conversionPolicy;
     const requestedNormalization = normalization;
+    const requestedProcessing = sound.id === selectedId || sound.id.includes(":segment:") ? { ...processing } : { ...DEFAULT_AUDIO_PROCESSING };
+    const requestKey = processingCacheKey(sound, requestedProcessing);
+    const cached = getCachedProcessing(requestKey);
+    if (cached) return cached;
+    const existing = preparingSounds.get(requestKey);
+    if (existing) return existing;
     const task = (async () => {
-      const profile = `${requestedConversionPolicy}:${requestedNormalization}`;
+      const profile = `${requestedConversionPolicy}:${requestedNormalization}:${audioProcessingKey(requestedProcessing)}`;
+      let project = null as Awaited<ReturnType<typeof getHostProjectContext>> | null;
       if (sound.path && sound.preparedProfile === profile && sound.preparedProjectPath) {
-        const currentProject = await getHostProjectContext();
-        if (currentProject.ok && currentProject.projectPath === sound.preparedProjectPath) return sound;
+        project = await getHostProjectContext();
+        if (project.ok && project.projectPath === sound.preparedProjectPath) return sound;
       }
-      const needsPreparation = requiresProjectAudioPreparation(sound, requestedConversionPolicy, requestedNormalization);
+      const needsPreparation = requiresProjectAudioPreparation(sound, requestedConversionPolicy, requestedNormalization, requestedProcessing);
       if (!needsPreparation && !sound.originalPath) return sound;
+      updatePreparationStatus(
+        sound,
+        sound.source === "freesound" && !sound.path ? "downloading" : "converting",
+        sound.source === "freesound" && !sound.path ? `Preparing ${sound.name}…` : `Preparing ${sound.name} for Adobe…`,
+      );
       updateSoundRecord({ ...sound, downloadState: sound.source === "freesound" ? "downloading" : sound.downloadState });
       try {
-        const project = await getHostProjectContext();
+        if (!project) project = await getHostProjectContext();
         if (!project.ok) throw new Error(project.message);
         const prepared = await prepareAudioForHost(sound, {
           host,
           project,
           conversionPolicy: requestedConversionPolicy,
           normalization: requestedNormalization,
-          onProgress: (_stage, message) => notify("info", message),
+          processing: requestedProcessing,
+          onProgress: (stage, message, nextProgress) => updatePreparationStatus(sound, stage, message, nextProgress),
         });
         const current = sounds.find((item) => item.id === sound.id) || freesoundSounds.find((item) => item.id === sound.id);
         const nextSound = current ? { ...prepared.sound, favorite: current.favorite } : prepared.sound;
-        updateSoundRecord(nextSound);
+        if (!hasAudioProcessing(requestedProcessing)) updateSoundRecord(nextSound);
+        else {
+          cachePreparedProcessing(requestKey, nextSound);
+          cachePreparedProcessing(processingCacheKey(sound, requestedProcessing, prepared.sound.preparedProjectPath || activeProjectPath), nextSound);
+        }
+        clearPreparationStatus(sound.id);
         return nextSound;
       } catch (error) {
+        clearPreparationStatus(sound.id);
         if (sound.source === "freesound") {
           const current = freesoundSounds.find((item) => item.id === sound.id) || sound;
           updateSoundRecord({ ...current, downloadState: "error" });
@@ -1154,21 +1458,11 @@
         throw error;
       }
     })();
-    preparingSounds.set(sound.id, task);
+    preparingSounds.set(requestKey, task);
     try {
       return await task;
     } finally {
-      if (preparingSounds.get(sound.id) === task) preparingSounds.delete(sound.id);
-    }
-  };
-
-  const downloadSound = async (sound: SoundFile) => {
-    if (sound.source !== "freesound" || sound.downloadState === "downloading") return;
-    try {
-      const prepared = await prepareSound(sound);
-      notify("success", `${prepared.name} is ready in this project's SoundDesigner folder.`);
-    } catch (error) {
-      notify("error", error instanceof Error ? error.message : "The sound could not be prepared.");
+      if (preparingSounds.get(requestKey) === task) preparingSounds.delete(requestKey);
     }
   };
 
@@ -1264,38 +1558,60 @@
     let completedFolders = 0;
     let skippedPaths = 0;
     let failedLibraries = 0;
-    for (const folder of folders) {
-      try {
-        const result = await scanFolder(folder.path, folder.accent, (next) => {
-          indexProgress = { files: completedFiles + next.files, folders: completedFolders + next.folders, currentPath: next.currentPath };
-        });
-        nextFolders.push(result.folder);
-        nextSounds.push(...result.sounds);
-        completedFiles += result.sounds.length;
-        completedFolders += countTreeNodes(result.folder.tree);
-        skippedPaths += result.diagnostics.unreadableDirectories + result.diagnostics.unreadableEntries;
-      } catch (error) {
-        // Keep the last valid index and persisted folder path on transient Windows or drive errors.
-        const existingSounds = sounds.filter((sound) => sound.folderId === folder.id);
-        nextFolders.push(folder);
-        nextSounds.push(...existingSounds);
-        completedFiles += existingSounds.length;
-        completedFolders += countTreeNodes(folder.tree);
-        failedLibraries += 1;
-        notify("error", error instanceof Error ? error.message : `${folder.name} could not be refreshed.`);
+    try {
+      for (const folder of folders) {
+        try {
+          const result = await scanFolder(folder.path, folder.accent, (next) => {
+            indexProgress = { files: completedFiles + next.files, folders: completedFolders + next.folders, currentPath: next.currentPath };
+          });
+          nextFolders.push(result.folder);
+          nextSounds.push(...result.sounds);
+          completedFiles += result.sounds.length;
+          completedFolders += countTreeNodes(result.folder.tree);
+          skippedPaths += result.diagnostics.unreadableDirectories + result.diagnostics.unreadableEntries;
+        } catch (error) {
+          // Keep the last valid index and persisted folder path on transient Windows or drive errors.
+          const existingSounds = sounds.filter((sound) => sound.folderId === folder.id);
+          nextFolders.push(folder);
+          nextSounds.push(...existingSounds);
+          completedFiles += existingSounds.length;
+          completedFolders += countTreeNodes(folder.tree);
+          failedLibraries += 1;
+          notify("error", error instanceof Error ? error.message : `${folder.name} could not be refreshed.`);
+        }
       }
+      folders = nextFolders;
+      sounds = nextSounds;
+      selectedId = nextSounds[0]?.id || "";
+      persistLibraryFolders(nextFolders);
+      const refreshHasWarnings = failedLibraries > 0 || skippedPaths > 0;
+      const refreshDetail = refreshHasWarnings
+        ? ` - ${failedLibraries} libraries unavailable - ${skippedPaths} paths skipped`
+        : "";
+      notify(refreshHasWarnings ? "warning" : "success", `Library refreshed - ${nextSounds.length} sounds - ${completedFolders} folders${refreshDetail}`);
+    } catch (error) {
+      notify("error", error instanceof Error ? error.message : "The sound libraries could not be refreshed.");
+    } finally {
+      isIndexing = false;
+      indexProgress = { files: completedFiles, folders: completedFolders, currentPath: "" };
     }
-    folders = nextFolders;
-    sounds = nextSounds;
-    selectedId = nextSounds[0]?.id || "";
-    persistLibraryFolders(nextFolders);
-    isIndexing = false;
-    indexProgress = { files: completedFiles, folders: completedFolders, currentPath: "" };
-    const refreshHasWarnings = failedLibraries > 0 || skippedPaths > 0;
-    const refreshDetail = refreshHasWarnings
-      ? ` - ${failedLibraries} libraries unavailable - ${skippedPaths} paths skipped`
-      : "";
-    notify(refreshHasWarnings ? "warning" : "success", `Library refreshed - ${nextSounds.length} sounds - ${completedFolders} folders${refreshDetail}`);
+  };
+
+  const insertPreparedInHost = async (prepared: SoundFile) => {
+    const result = await insertAudioInHost({ path: prepared.path, name: prepared.name, targetAudioTrack: -1, insertionTarget });
+    notify(result.ok ? "success" : "error", result.message);
+  };
+
+  const insertPreparedFromDrag = async (prepared: SoundFile) => {
+    if (insertBusy) return;
+    insertBusy = true;
+    try {
+      await insertPreparedInHost(prepared);
+    } catch (error) {
+      notify("error", error instanceof Error ? error.message : "The prepared sound could not be inserted.");
+    } finally {
+      insertBusy = false;
+    }
   };
 
   const insertSelected = async (soundOverride?: SoundFile | null) => {
@@ -1311,8 +1627,7 @@
         ? await prepareSelectedSegment(segmentSelection)
         : await prepareSound(sound);
       if (!prepared) throw new Error("The selected audio segment could not be prepared.");
-      const result = await insertAudioInHost({ path: prepared.path, name: prepared.name, targetAudioTrack: -1, insertionTarget });
-      notify(result.ok ? "success" : "error", result.message);
+      await insertPreparedInHost(prepared);
     } catch (error) {
       notify("error", error instanceof Error ? error.message : "The sound could not be prepared for Adobe.");
     } finally {
@@ -1375,16 +1690,68 @@
     };
   };
 
-  const dragSound = (sound: SoundFile, event: DragEvent) => {
-    if (requiresProjectAudioPreparation(sound, conversionPolicy, normalization)) {
-      event.preventDefault();
-      notify("info", `${sound.name} must be prepared before dragging. Downloading or converting it now…`);
-      prepareSound(sound).then((prepared) => {
-        notify("success", `${prepared.name} is ready. Drag it again to add it to Adobe.`);
-      }).catch((error) => {
-        notify("error", error instanceof Error ? error.message : "The sound could not be prepared for dragging.");
-      });
+  const droppedOutsidePanel = (event: DragEvent, leftPanel = false) => leftPanel
+    || event.clientX <= 0
+    || event.clientY <= 0
+    || event.clientX >= window.innerWidth
+    || event.clientY >= window.innerHeight;
+
+  const startPreparationDrag = (sound: SoundFile) => {
+    if (preparationDragSession?.soundId === sound.id && !preparationDragSession.cancelled) return preparationDragSession;
+    if (preparationDragSession) preparationDragSession.cancelled = true;
+    const promise = prepareSound(sound);
+    // Pointer prewarming can finish without a drag. Attach a rejection handler
+    // now so a cancelled gesture never creates an unhandled promise.
+    promise.catch(() => undefined);
+    preparationDragSession = {
+      id: ++preparationDragSessionId,
+      soundId: sound.id,
+      promise,
+      leftPanel: false,
+      cancelled: false,
+      announced: false,
+    };
+    return preparationDragSession;
+  };
+
+  const prepareSoundForDrag = (sound: SoundFile) => {
+    const requestedProcessing = sound.id === selectedId || sound.id.includes(":segment:") ? processing : DEFAULT_AUDIO_PROCESSING;
+    const cached = getCachedProcessing(processingCacheKey(sound, requestedProcessing));
+    if (cached) {
+      if (host === "aftereffects") prepareAfterEffectsDrag(cached);
       return;
+    }
+    if (requiresProjectAudioPreparation(sound, conversionPolicy, normalization, requestedProcessing)) {
+      startPreparationDrag(sound);
+      return;
+    }
+    if (host === "aftereffects") prepareAfterEffectsDrag(sound);
+  };
+
+  const dragSound = (sound: SoundFile, event: DragEvent) => {
+    const requestedProcessing = sound.id === selectedId || sound.id.includes(":segment:") ? processing : DEFAULT_AUDIO_PROCESSING;
+    const cached = getCachedProcessing(processingCacheKey(sound, requestedProcessing));
+    if (cached) {
+      dragSound(cached, event);
+      return;
+    }
+    if (requiresProjectAudioPreparation(sound, conversionPolicy, normalization, requestedProcessing)) {
+      const session = startPreparationDrag(sound);
+      session.leftPanel = false;
+      session.cancelled = false;
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData("text/plain", `${sound.name} · preparing for Adobe`);
+      }
+      if (!session.announced) {
+        session.announced = true;
+        notify("info", `Preparing ${sound.name} · release over Adobe to insert automatically.`);
+      }
+      return;
+    }
+    if (preparationDragSession?.soundId === sound.id) {
+      preparationDragSession.cancelled = true;
+      preparationDragSession = null;
     }
     if (!sound.path || !event.dataTransfer) { event.preventDefault(); return; }
     if (host === "aftereffects" && afterEffectsDragSession?.soundId !== sound.id) prepareAfterEffectsDrag(sound);
@@ -1417,12 +1784,7 @@
     afterEffectsDragSession = null;
     if (!session || session.soundId !== sound.id || session.cancelled) return;
 
-    const droppedOutsidePanel = session.leftPanel
-      || event.clientX <= 0
-      || event.clientY <= 0
-      || event.clientX >= window.innerWidth
-      || event.clientY >= window.innerHeight;
-    if (!droppedOutsidePanel) return;
+    if (!droppedOutsidePanel(event, session.leftPanel)) return;
 
     const nativeDropAccepted = event.dataTransfer
       && event.dataTransfer.dropEffect
@@ -1446,6 +1808,19 @@
   };
 
   const finishSoundDrag = async (sound: SoundFile, event: DragEvent) => {
+    const preparationSession = preparationDragSession;
+    if (preparationSession?.soundId === sound.id) {
+      preparationDragSession = null;
+      if (preparationSession.cancelled || !droppedOutsidePanel(event, preparationSession.leftPanel)) return;
+      try {
+        const prepared = await preparationSession.promise;
+        if (preparationSession.cancelled || preparationSession.id !== preparationDragSessionId) return;
+        await insertPreparedFromDrag(prepared);
+      } catch (error) {
+        notify("error", error instanceof Error ? error.message : "The sound could not be prepared and inserted.");
+      }
+      return;
+    }
     if (host === "aftereffects") {
       await finishAfterEffectsDrag(sound, event);
       return;
@@ -1454,11 +1829,7 @@
     const nativeDropAccepted = event.dataTransfer
       && event.dataTransfer.dropEffect
       && event.dataTransfer.dropEffect !== "none";
-    const droppedOutsidePanel = event.clientX <= 0
-      || event.clientY <= 0
-      || event.clientX >= window.innerWidth
-      || event.clientY >= window.innerHeight;
-    if (nativeDropAccepted || droppedOutsidePanel) await organizeAudioAfterNativeDrop(sound);
+    if (nativeDropAccepted || droppedOutsidePanel(event)) await organizeAudioAfterNativeDrop(sound);
   };
 
   const dragSelectedSegment = (event: DragEvent) => {
@@ -1474,26 +1845,43 @@
       return;
     }
     if (!preparedSegment) {
-      event.preventDefault();
-      notify("info", "Preparing the selected segment. Drag it again when the range shows Ready.");
-      prepareSelectedSegment(segmentSelection);
+      segmentDragPreparation = prepareSelectedSegment(segmentSelection, false);
+      segmentDragLeftPanel = false;
+      segmentDragCancelled = false;
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData("text/plain", `${selected.name} · preparing selected segment`);
+      }
+      notify("info", "Preparing the selected segment · release over Adobe to insert automatically.");
       return;
     }
     dragSound(preparedSegment, event);
   };
 
-  const finishSelectedSegmentDrag = (event: DragEvent) => {
-    if (preparedSegment) finishSoundDrag(preparedSegment, event);
+  const finishSelectedSegmentDrag = async (event: DragEvent) => {
+    const pending = segmentDragPreparation;
+    segmentDragPreparation = null;
+    if (pending) {
+      if (segmentDragCancelled || !droppedOutsidePanel(event, segmentDragLeftPanel)) return;
+      const prepared = await pending;
+      if (prepared && !segmentDragCancelled) await insertPreparedFromDrag(prepared);
+      return;
+    }
+    if (preparedSegment) await finishSoundDrag(preparedSegment, event);
   };
 
   const markDragInsidePanel = () => {
     if (afterEffectsDragSession) afterEffectsDragSession.leftPanel = false;
+    if (preparationDragSession) preparationDragSession.leftPanel = false;
+    if (segmentDragPreparation) segmentDragLeftPanel = false;
   };
 
   const markDragOutsidePanel = (event: DragEvent) => {
-    if (!afterEffectsDragSession) return;
     const related = event.relatedTarget;
-    if (!(related instanceof Node) || !document.documentElement.contains(related)) afterEffectsDragSession.leftPanel = true;
+    if ((related instanceof Node) && document.documentElement.contains(related)) return;
+    if (afterEffectsDragSession) afterEffectsDragSession.leftPanel = true;
+    if (preparationDragSession) preparationDragSession.leftPanel = true;
+    if (segmentDragPreparation) segmentDragLeftPanel = true;
   };
 </script>
 
@@ -1591,6 +1979,7 @@
 
       <div
         class:is-preview-open={compactPreviewOpen}
+        class:has-effects={effectsOpen}
         class="search-content"
       >
         <div
@@ -1613,25 +2002,25 @@
             {#each renderedSounds as sound (sound.id)}
               <SoundRow
                 {sound}
-                channels={sound.id === selectedId ? previewChannels : []}
+                channels={sound.id === selectedId ? previewChannels : EMPTY_WAVEFORM_CHANNELS}
                 selected={sound.id === selectedId}
                 playing={playing && sound.id === selectedId}
                 progress={sound.id === selectedId ? progress : 0}
+                preparation={soundPreparation[sound.id]}
                 dragHint={sound.source === "freesound" && !sound.path
-                  ? "Download for this project before dragging"
+                  ? soundPreparation[sound.id] ? "Preparing automatically…" : "Drag to prepare automatically"
                   : host === "aftereffects" ? "Drag into the active composition" : "Drag to host (support varies)"}
                 onSelect={() => selectSound(sound.id)}
                 onPlay={() => { if (sound.id !== selectedId) { pendingPlayId = sound.id; selectedId = sound.id; } else togglePlay(); }}
                 onInsert={() => { selectedId = sound.id; insertSelected(sound); }}
                 onFavorite={() => toggleFavorite(sound)}
-                onDownload={() => downloadSound(sound)}
-                onDragPrepare={() => prepareAfterEffectsDrag(sound)}
+                onDragPrepare={() => prepareSoundForDrag(sound)}
                 onDragStart={(event) => dragSound(sound, event)}
                 onDragEnd={(event) => finishSoundDrag(sound, event)}
               />
             {/each}
             {#if virtualBottomSpace}<div class="results-spacer" style:height={`${virtualBottomSpace}px`}></div>{/if}
-            {#if cloudSourceActive && freesoundHasNext && !virtualizedResults}
+            {#if cloudSourceActive && freesoundHasNext}
               <button class="load-more-button" disabled={freesoundStatus === "loading"} onclick={loadMoreFreesound} type="button">
                 {#if freesoundStatus === "loading"}<span class="spinner"></span>{:else}<Icon name="cloud" size={14} />{/if}
                 Load more from Freesound
@@ -1693,31 +2082,34 @@
           channelsLoading={waveformChannelsLoading}
           {progress}
           {zoom}
-          {reversed}
+          reversed={processing.reverse}
           selection={segmentSelection}
           {segmentPreparing}
           segmentReady={host === "browser" ? Boolean(segmentSelection) : Boolean(preparedSegment)}
+          {effectsOpen} {processing} processingBusy={processingPreviewBusy} processingError={processingPreviewError}
           onSeek={seek}
           onZoomIn={() => zoom = Math.min(3, zoom + 0.5)}
           onZoomOut={() => zoom = Math.max(1, zoom - 0.5)}
           onSelectionChange={updateSegmentSelection}
           onSegmentDragStart={dragSelectedSegment}
           onSegmentDragEnd={finishSelectedSegmentDrag}
+          onProcessing={updateProcessing}
+          onResetProcessing={() => updateProcessing({ ...DEFAULT_AUDIO_PROCESSING })}
+          onCloseEffects={() => effectsOpen = false}
         />
       </div>
     </section>
   </main>
 
   <Transport
-    sound={selected} {playing} {progress} {volume} {loop} {reversed} busy={insertBusy}
+    sound={selected} {playing} {progress} {loop} {processing} processingBusy={processingPreviewBusy} busy={insertBusy} {effectsOpen}
     segmentDuration={segmentSelection ? segmentSelection.end - segmentSelection.start : 0}
     onPrevious={() => moveSelection(-1)}
     onTogglePlay={togglePlay}
     onNext={() => moveSelection(1)}
-    onStop={() => stopPlayback()}
+    onStop={stopPlayback}
     onLoop={() => loop = !loop}
-    onReverse={() => { const playbackWasReversed = reversed; reversed = !reversed; stopPlayback(playbackWasReversed); }}
-    onVolume={(value) => volume = value}
+    onToggleEffects={() => effectsOpen = !effectsOpen}
     onInsert={() => insertSelected()}
     onRemove={removeSelectedFromIndex}
   />
