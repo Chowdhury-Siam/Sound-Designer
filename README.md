@@ -1,6 +1,6 @@
 <div align="center">
 
-<img alt="SoundDesigner" src=".github/assets/SoundDesigner.png" width="900">
+<img alt="SoundDesigner" src=".github/assets/SoundDesigner.png" width="720">
 
 **Find it. Shape it. Drop it into the edit.**
 
