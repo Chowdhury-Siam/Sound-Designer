@@ -1,7 +1,7 @@
 {
   "name": "com.rksound.designer",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "packageManager": "bun@1.3.14",
   "repository": {
     "type": "git",
@@ -14,9 +14,10 @@
     "watch": "svelte-check --workspace ./src/js --tsconfig ../../tsconfig.svelte.json && tsc && cross-env BOLT_WATCH=true vite build --watch",
     "check": "svelte-check --workspace ./src/js --tsconfig ../../tsconfig.svelte.json",
     "test:audio": "bun scripts/audio-effects-smoke.ts",
+    "test:search-tabs": "bun scripts/search-tabs-smoke.ts",
     "build": "rimraf dist && svelte-check --workspace ./src/js --tsconfig ../../tsconfig.svelte.json && tsc -p \"tsconfig-build.json\" && vite build",
     "certificate:create": "node scripts/create-publisher-certificate.mjs",
-    "release:package": "bun run test:audio && cross-env SOUNDDESIGNER_RELEASE_BUILD=true bun run build && node scripts/package-release.mjs",
+    "release:package": "bun run test:audio && bun run test:search-tabs && cross-env SOUNDDESIGNER_RELEASE_BUILD=true bun run build && node scripts/package-release.mjs",
     "zxp": "rimraf dist && svelte-check --workspace ./src/js --tsconfig ../../tsconfig.svelte.json && tsc -p \"tsconfig-build.json\" && cross-env ZXP_PACKAGE=true vite build",
     "zip": "rimraf dist && svelte-check --workspace ./src/js --tsconfig ../../tsconfig.svelte.json && tsc -p \"tsconfig-build.json\" && cross-env ZIP_PACKAGE=true vite build",
     "serve": "cross-env SERVE_PANEL=true vite preview",

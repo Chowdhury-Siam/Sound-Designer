@@ -330,6 +330,9 @@ bun run check
 # Test audio effects and WAV rendering
 bun run test:audio
 
+# Test per-tab folder naming and search state
+bun run test:search-tabs
+
 # Compile the CEP extension
 bun run build
 ```

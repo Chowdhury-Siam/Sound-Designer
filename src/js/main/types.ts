@@ -105,6 +105,7 @@ export type SearchTab = {
   id: string;
   label: string;
   query: string;
+  folderId: string;
 };
 
 export type ToastMessage = {

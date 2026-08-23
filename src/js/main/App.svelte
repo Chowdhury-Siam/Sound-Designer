@@ -25,6 +25,7 @@
   import { audioProcessingKey, DEFAULT_AUDIO_PROCESSING, hasAudioProcessing, normalizeAudioProcessing } from "./audioEffects";
   import { searchFreesound } from "./freesound";
   import { prepareAudioForHost, prepareAudioSegmentForHost, requiresProjectAudioPreparation } from "./projectAudio";
+  import { createLibraryTabs, createSearchTab, searchTabLabel, updateSearchTabFolder, updateSearchTabQuery } from "./searchTabs";
   import { checkForUpdates, dismissUpdate, INSTALLED_VERSION, isUpdateDismissed, type UpdateState } from "./updater";
   import type {
     AudioConversionPolicy,
@@ -41,7 +42,7 @@
     SoundFile,
     ToastMessage,
   } from "./types";
-  import { collectTreeIds, countTreeNodes, findTreeNode, hostLabel } from "./ui-utils";
+  import { collectTreeIds, countTreeNodes, hostLabel } from "./ui-utils";
   import Icon from "./components/Icon.svelte";
   import IconButton from "./components/IconButton.svelte";
   import LibrarySidebar from "./components/LibrarySidebar.svelte";
@@ -73,7 +74,6 @@
     if (window.innerWidth >= 821 && window.innerHeight <= 600 && window.innerWidth / Math.max(1, window.innerHeight) >= 1.5) return 52;
     return 57;
   };
-  const createLibraryTabs = (): SearchTab[] => [{ id: "search-library", label: "All sounds", query: "" }];
   type SortMode = "relevance" | "name" | "duration";
 
   const createBrowserDemoAudio = () => {
@@ -254,7 +254,6 @@
   let freesoundPage = $state(1);
   let freesoundHasNext = $state(false);
   let freesoundRefreshNonce = $state(0);
-  let selectedFolder = $state("all");
   let selectedId = $state(browserDemoSound?.id || "");
   let folderQuery = $state("");
   let tabs = $state<SearchTab[]>(createLibraryTabs());
@@ -393,6 +392,24 @@
   };
 
   let activeTab = $derived(tabs.find((tab) => tab.id === activeTabId) || tabs[0]);
+  let selectedFolder = $derived(activeTab?.folderId || "all");
+  let folderNodesById = $derived.by(() => {
+    const nodes = new Map<string, LibraryFolder["tree"]>();
+    for (const folder of folders) {
+      const pending = [folder.tree];
+      while (pending.length) {
+        const node = pending.pop();
+        if (!node) continue;
+        nodes.set(node.id, node);
+        for (const child of node.children) pending.push(child);
+      }
+    }
+    return nodes;
+  });
+  const folderNameForId = (folderId: string) => folderNodesById.get(folderId)?.name || "";
+  const setActiveTabFolder = (folderId: string) => {
+    tabs = updateSearchTabFolder(tabs, activeTabId, folderId, folderNameForId);
+  };
   let cloudSourceActive = $derived(freesoundLibraryEnabled && freesoundSourceEnabled);
   let selected = $derived(sounds.find((sound) => sound.id === selectedId) || freesoundSounds.find((sound) => sound.id === selectedId) || null);
   let settingsFolder = $derived(folders.find((folder) => folder.id === settingsFolderId) || null);
@@ -400,13 +417,8 @@
   let selectedDirectoryIds = $derived.by(() => {
     const ids = new Set<string>();
     if (selectedFolder === "all") return ids;
-    for (const folder of folders) {
-      const node = folder.id === selectedFolder ? folder.tree : findTreeNode(folder.tree, selectedFolder);
-      if (node) {
-        collectTreeIds(node, ids);
-        break;
-      }
-    }
+    const node = folderNodesById.get(selectedFolder);
+    if (node) collectTreeIds(node, ids);
     return ids;
   });
   let localVisibleSounds = $derived.by(() => {
@@ -1184,7 +1196,6 @@
         if (isCrossHostRefresh && !cancelled) {
           folders = [];
           sounds = [];
-          selectedFolder = "all";
           selectedId = "";
           tabs = createLibraryTabs();
           activeTabId = "search-library";
@@ -1222,7 +1233,6 @@
       if (!cancelled && nextFolders.length) {
         folders = nextFolders;
         sounds = nextSounds;
-        selectedFolder = "all";
         selectedId = nextSounds[0]?.id || "";
         tabs = createLibraryTabs();
         activeTabId = "search-library";
@@ -1522,12 +1532,12 @@
       folders = nextFolders;
       sounds = nextSounds;
       persistLibraryFolders(nextFolders);
-      selectedFolder = result.folder.id;
       selectedId = result.sounds[0]?.id || "";
       if (nextFolders.length === 1) {
         tabs = createLibraryTabs();
         activeTabId = "search-library";
       }
+      setActiveTabFolder(result.folder.id);
       indexProgress = { files: result.sounds.length, folders: countTreeNodes(result.folder.tree), currentPath: result.folder.path };
       const skippedPaths = result.diagnostics.unreadableDirectories + result.diagnostics.unreadableEntries;
       const seenExtensions = result.diagnostics.extensionsSeen.length
@@ -1648,27 +1658,35 @@
   const deleteSettingsFolder = () => {
     if (!settingsFolder) return;
     const deletedName = settingsFolder.name;
+    const deletedTree = settingsFolder.tree;
+    const deletedFolderId = settingsFolder.id;
+    const deletedFolderScopes = new Set<string>();
+    collectTreeIds(deletedTree, deletedFolderScopes);
+    deletedFolderScopes.add(deletedFolderId);
     const nextFolders = folders.filter((folder) => folder.id !== settingsFolder?.id);
     const nextSounds = sounds.filter((sound) => sound.folderId !== settingsFolder?.id);
     folders = nextFolders;
     sounds = nextSounds;
     persistLibraryFolders(nextFolders);
-    selectedFolder = "all";
     selectedId = nextSounds[0]?.id || "";
     if (!nextFolders.length) {
       tabs = createLibraryTabs();
       activeTabId = "search-library";
-    }
+    } else tabs = tabs.map((tab) => {
+      if (!deletedFolderScopes.has(tab.folderId)) return tab;
+      const resetTab = { ...tab, folderId: "all" };
+      return { ...resetTab, label: searchTabLabel(resetTab, folderNameForId) };
+    });
     settingsOpen = false;
     notify("info", `${deletedName} removed from SoundDesigner. Files were kept.`);
   };
 
   const updateSearchQuery = (query: string) => {
-    tabs = tabs.map((tab) => tab.id === activeTabId ? { ...tab, query, label: query.trim() || "New search" } : tab);
+    tabs = updateSearchTabQuery(tabs, activeTabId, query, folderNameForId);
   };
   const addSearchTab = () => {
     const id = `search-${Date.now()}`;
-    tabs = [...tabs, { id, label: "New search", query: "" }];
+    tabs = [...tabs, createSearchTab(id, selectedFolder, folderNameForId)];
     activeTabId = id;
   };
   const closeSearchTab = (id: string) => {
@@ -1900,7 +1918,7 @@
       {folders} {sounds} {selectedFolder} query={folderQuery} indexing={isIndexing} {indexProgress} {now}
       {localSourceEnabled} {freesoundLibraryEnabled} {freesoundSourceEnabled}
       freesoundConnected={Boolean(freesoundApiKey)} freesoundCount={freesoundTotal}
-      onSelectFolder={(id) => { selectedFolder = id; sidebarOpen = false; }}
+      onSelectFolder={(id) => { setActiveTabFolder(id); sidebarOpen = false; }}
       onQueryChange={(value) => folderQuery = value}
       onAddFolder={addFolder}
       onEditFolder={(id) => { settingsFolderId = id; settingsOpen = true; }}
