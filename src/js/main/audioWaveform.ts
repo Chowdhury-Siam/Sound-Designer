@@ -152,6 +152,32 @@ const extractPeaks = (samples: Float32Array, bins: number) => {
   return peaks;
 };
 
+export const compactWaveformFromChannels = (channels: Float32Array[], bars = 96) => {
+  if (!channels.length || bars < 2) return new Float32Array();
+  const sourceBins = Math.max(1, Math.floor(channels[0].length / 2));
+  const waveform = new Float32Array(bars);
+  let absolutePeak = 0;
+  for (let bar = 0; bar < bars; bar += 1) {
+    const start = Math.floor((bar * sourceBins) / bars);
+    const end = Math.max(start + 1, Math.floor(((bar + 1) * sourceBins) / bars));
+    let amplitude = 0;
+    for (let bin = start; bin < end; bin += 1) {
+      for (let channel = 0; channel < channels.length; channel += 1) {
+        amplitude = Math.max(
+          amplitude,
+          Math.abs(channels[channel][bin * 2] || 0),
+          Math.abs(channels[channel][bin * 2 + 1] || 0),
+        );
+      }
+    }
+    waveform[bar] = amplitude;
+    absolutePeak = Math.max(absolutePeak, amplitude);
+  }
+  const gain = absolutePeak > 0 ? Math.min(3, 0.94 / absolutePeak) : 1;
+  for (let index = 0; index < waveform.length; index += 1) waveform[index] *= gain;
+  return waveform;
+};
+
 const rememberChannels = (key: string, channels: Float32Array[]) => {
   channelCache.delete(key);
   channelCache.set(key, channels);

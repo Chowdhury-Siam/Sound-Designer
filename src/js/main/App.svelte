@@ -21,12 +21,14 @@
     type AfterEffectsAudioDragState,
   } from "./hostBridge";
   import { csi, openLinkInBrowser } from "../lib/utils/bolt";
-  import { decodeAudioWaveformChannels, decodeRemoteAudioWaveformChannels, renderProcessedPreview } from "./audioWaveform";
+  import { compactWaveformFromChannels, decodeAudioWaveformChannels, decodeRemoteAudioWaveformChannels, renderProcessedPreview } from "./audioWaveform";
   import { audioProcessingKey, DEFAULT_AUDIO_PROCESSING, hasAudioProcessing, normalizeAudioProcessing } from "./audioEffects";
   import { searchFreesound } from "./freesound";
   import { prepareAudioForHost, prepareAudioSegmentForHost, requiresProjectAudioPreparation } from "./projectAudio";
   import { createLibraryTabs, createSearchTab, searchTabLabel, updateSearchTabFolder, updateSearchTabQuery } from "./searchTabs";
   import { checkForUpdates, dismissUpdate, INSTALLED_VERSION, isUpdateDismissed, type UpdateState } from "./updater";
+  import { labelColorOrder } from "./labels";
+  import { flushLibraryMetadata, hydrateLibraryMetadata, saveFolderMetadata, saveSoundMetadata } from "./libraryMetadata";
   import type {
     AudioConversionPolicy,
     AudioNormalization,
@@ -35,6 +37,7 @@
     AudioSegmentSelection,
     FreesoundLicenseFilter,
     InsertionTarget,
+    LabelColor,
     LibraryFolder,
     ScanProgress,
     SearchTab,
@@ -45,6 +48,7 @@
   import { collectTreeIds, countTreeNodes, hostLabel } from "./ui-utils";
   import Icon from "./components/Icon.svelte";
   import IconButton from "./components/IconButton.svelte";
+  import ColorLabelPicker from "./components/ColorLabelPicker.svelte";
   import LibrarySidebar from "./components/LibrarySidebar.svelte";
   import PreviewPane from "./components/PreviewPane.svelte";
   import SearchTabs from "./components/SearchTabs.svelte";
@@ -74,7 +78,7 @@
     if (window.innerWidth >= 821 && window.innerHeight <= 600 && window.innerWidth / Math.max(1, window.innerHeight) >= 1.5) return 52;
     return 57;
   };
-  type SortMode = "relevance" | "name" | "duration";
+  type SortMode = "relevance" | "name" | "duration" | "label";
 
   const createBrowserDemoAudio = () => {
     const sampleRate = 8000;
@@ -260,6 +264,7 @@
   let activeTabId = $state("search-library");
   let filter = $state("all");
   let sortMode = $state<SortMode>("relevance");
+  let labelFilter = $state<LabelColor | undefined>(undefined);
   let compactResults = $state(true);
   let playing = $state(false);
   let progress = $state(0);
@@ -329,6 +334,11 @@
   let freesoundSearchGeneration = 0;
   let segmentPreparationGeneration = 0;
   let processingPreparationTimer = 0;
+  let waveformAnalysisTimer = 0;
+  let waveformAnalysisBusy = false;
+  const waveformAnalysisQueue: string[] = [];
+  const waveformAnalysisQueued = new Set<string>();
+  const waveformAnalysisPriority = new Set<string>();
   const freesoundSessionCache = new Map<string, SoundFile>();
   const preparingSounds = new Map<string, Promise<SoundFile>>();
   const preparedProcessingCache = new Map<string, SoundFile>();
@@ -379,6 +389,7 @@
     return {
       ...sound,
       favorite: cached.favorite,
+      labelColor: cached.labelColor,
       path: cached.path,
       extension: cached.path ? cached.extension : sound.extension,
       size: cached.path ? cached.size : sound.size,
@@ -390,6 +401,9 @@
       originalExtension: cached.originalExtension,
     };
   };
+
+  const hydrateFreesoundResults = (nextSounds: SoundFile[]) =>
+    hydrateLibraryMetadata([], nextSounds).sounds.map(mergeFreesoundSessionState);
 
   let activeTab = $derived(tabs.find((tab) => tab.id === activeTabId) || tabs[0]);
   let selectedFolder = $derived(activeTab?.folderId || "all");
@@ -429,6 +443,7 @@
       if (filter === "favorites" && !sound.favorite) return false;
       if (filter === "ambience" && !sound.tags.includes("ambience") && sound.duration < 10) return false;
       if (filter === "one-shot" && sound.duration > 8) return false;
+      if (labelFilter && sound.labelColor !== labelFilter) return false;
       if (!queryTokens.length) return true;
       const haystack = soundSearchText(sound);
       return queryTokens.every((token) => haystack.includes(token));
@@ -438,15 +453,18 @@
     if (filter === "favorites" && !sound.favorite) return false;
     if (filter === "ambience" && !sound.tags.includes("ambience") && sound.duration < 10) return false;
     if (filter === "one-shot" && sound.duration > 8) return false;
+    if (labelFilter && sound.labelColor !== labelFilter) return false;
     return true;
   }) : []);
   let visibleSounds = $derived.by(() => {
     const combined = [...localVisibleSounds, ...freesoundVisibleSounds];
     if (sortMode === "name") return combined.sort((first, second) => first.name.localeCompare(second.name));
     if (sortMode === "duration") return combined.sort((first, second) => (second.duration || 0) - (first.duration || 0));
+    if (sortMode === "label") return combined.sort((first, second) =>
+      labelColorOrder(first.labelColor) - labelColorOrder(second.labelColor) || first.name.localeCompare(second.name));
     return combined;
   });
-  let sortLabel = $derived(sortMode === "name" ? "Name" : sortMode === "duration" ? "Duration" : "Relevance");
+  let sortLabel = $derived(sortMode === "name" ? "Name" : sortMode === "duration" ? "Duration" : sortMode === "label" ? "Label" : "Relevance");
   let searchPlaceholder = $derived(localSourceEnabled && cloudSourceActive
     ? "Search local and Freesound…"
     : cloudSourceActive ? "Search Freesound…" : "Search local sounds…");
@@ -475,6 +493,71 @@
 
   const persistLibraryFolders = (nextFolders: LibraryFolder[]) => {
     persistedLibrarySignature = JSON.stringify(saveLibraryPaths(nextFolders));
+  };
+
+  const commitRealWaveform = (sound: SoundFile, channels: Float32Array[]) => {
+    if (!channels.length) return;
+    const compact = compactWaveformFromChannels(channels);
+    if (compact.length < 2) return;
+    const current = sounds.find((item) => item.id === sound.id);
+    if (!current) return;
+    current.waveform = compact;
+    current.waveformReal = true;
+    saveSoundMetadata(current, { waveform: compact });
+  };
+
+  const scheduleWaveformAnalysis = (delay = 650) => {
+    if (waveformAnalysisTimer || waveformAnalysisBusy || !waveformAnalysisQueue.length) return;
+    waveformAnalysisTimer = window.setTimeout(async () => {
+      waveformAnalysisTimer = 0;
+      if (document.hidden || isIndexing) {
+        scheduleWaveformAnalysis(1200);
+        return;
+      }
+      const soundId = waveformAnalysisQueue.shift();
+      if (!soundId) return;
+      waveformAnalysisQueued.delete(soundId);
+      waveformAnalysisPriority.delete(soundId);
+      const sound = sounds.find((item) => item.id === soundId);
+      if (!sound || !sound.path || sound.waveformReal || sound.size > 32 * 1024 * 1024 || sound.duration > 120) {
+        scheduleWaveformAnalysis(waveformAnalysisPriority.has(waveformAnalysisQueue[0] || "") ? 40 : 160);
+        return;
+      }
+      waveformAnalysisBusy = true;
+      try {
+        const channels = await decodeAudioWaveformChannels(sound.path, sound.size, sound.modifiedAt, sound.duration);
+        commitRealWaveform(sound, channels);
+      } finally {
+        waveformAnalysisBusy = false;
+        scheduleWaveformAnalysis(waveformAnalysisPriority.has(waveformAnalysisQueue[0] || "") ? 80 : playing ? 1100 : 650);
+      }
+    }, delay);
+  };
+
+  const enqueueWaveformAnalysis = (candidates: SoundFile[], priority = false) => {
+    const ids: string[] = [];
+    for (const sound of candidates) {
+      if (!sound.path || sound.source === "freesound" || sound.waveformReal) continue;
+      if (waveformAnalysisQueued.has(sound.id)) {
+        if (priority) {
+          const queuedIndex = waveformAnalysisQueue.indexOf(sound.id);
+          if (queuedIndex >= 0) waveformAnalysisQueue.splice(queuedIndex, 1);
+          waveformAnalysisPriority.add(sound.id);
+          ids.push(sound.id);
+        }
+        continue;
+      }
+      waveformAnalysisQueued.add(sound.id);
+      if (priority) waveformAnalysisPriority.add(sound.id);
+      ids.push(sound.id);
+    }
+    if (priority) waveformAnalysisQueue.unshift(...ids);
+    else waveformAnalysisQueue.push(...ids);
+    if (priority && ids.length && waveformAnalysisTimer) {
+      window.clearTimeout(waveformAnalysisTimer);
+      waveformAnalysisTimer = 0;
+    }
+    scheduleWaveformAnalysis(priority ? 30 : 650);
   };
 
   const setLibraryWidth = (value: number, persist = false) => {
@@ -544,7 +627,7 @@
   };
 
   const cycleSortMode = () => {
-    sortMode = sortMode === "relevance" ? "name" : sortMode === "name" ? "duration" : "relevance";
+    sortMode = sortMode === "relevance" ? "name" : sortMode === "name" ? "duration" : sortMode === "duration" ? "label" : "relevance";
     resultsScrollTop = 0;
     pendingResultsScrollTop = 0;
     resultsList?.scrollTo(0, 0);
@@ -657,6 +740,7 @@
         if (stillSelected()) {
           previewChannels = channels;
           waveformChannelsLoading = false;
+          if (current.path && current.source !== "freesound") commitRealWaveform(current, channels);
         }
       });
     }, 0);
@@ -670,11 +754,17 @@
     activeTabId;
     activeTab?.query;
     filter;
+    labelFilter;
     selectedFolder;
     untrack(() => {
       resultsScrollTop = 0;
       resultsList?.scrollTo(0, 0);
     });
+  });
+
+  $effect(() => {
+    const visibleLocalSounds = renderedSounds.filter((sound) => sound.source !== "freesound");
+    untrack(() => enqueueWaveformAnalysis(visibleLocalSounds, true));
   });
 
   $effect(() => {
@@ -798,7 +888,7 @@
       freesoundError = "";
       searchFreesound(query, apiKey, licenseFilter, 1, controller.signal).then((page) => {
         if (controller.signal.aborted || generation !== freesoundSearchGeneration) return;
-        freesoundSounds = page.sounds.map(mergeFreesoundSessionState);
+        freesoundSounds = hydrateFreesoundResults(page.sounds);
         freesoundTotal = page.total;
         freesoundPage = page.page;
         freesoundHasNext = page.hasNext;
@@ -988,6 +1078,16 @@
       }
       nextAudio.removeAttribute("src");
       nextAudio.load();
+    };
+  });
+
+  onMount(() => {
+    const flush = () => flushLibraryMetadata();
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      if (waveformAnalysisTimer) window.clearTimeout(waveformAnalysisTimer);
+      flushLibraryMetadata();
     };
   });
 
@@ -1231,9 +1331,11 @@
         }
       }
       if (!cancelled && nextFolders.length) {
-        folders = nextFolders;
-        sounds = nextSounds;
-        selectedId = nextSounds[0]?.id || "";
+        const hydrated = hydrateLibraryMetadata(nextFolders, nextSounds);
+        folders = hydrated.folders;
+        sounds = hydrated.sounds;
+        selectedId = hydrated.sounds[0]?.id || "";
+        enqueueWaveformAnalysis(hydrated.sounds);
         tabs = createLibraryTabs();
         activeTabId = "search-library";
         if (failedStoredPaths || restoreSkippedPaths) {
@@ -1387,7 +1489,36 @@
     }
   };
 
-  const toggleFavorite = (sound: SoundFile) => updateSoundRecord({ ...sound, favorite: !sound.favorite });
+  const toggleFavorite = (sound: SoundFile) => {
+    const next = { ...sound, favorite: !sound.favorite };
+    updateSoundRecord(next);
+    saveSoundMetadata(next, { favorite: next.favorite });
+  };
+
+  const updateSoundLabel = (sound: SoundFile, color?: LabelColor) => {
+    const next = { ...sound, labelColor: color };
+    updateSoundRecord(next);
+    saveSoundMetadata(next, color ? { labelColor: color } : { clearLabel: true });
+  };
+
+  const updateFolderNode = (nodeId: string, updater: (node: LibraryFolder["tree"]) => LibraryFolder["tree"]) => {
+    const updateTree = (node: LibraryFolder["tree"]): LibraryFolder["tree"] => node.id === nodeId
+      ? updater(node)
+      : { ...node, children: node.children.map(updateTree) };
+    folders = folders.map((folder) => ({ ...folder, tree: updateTree(folder.tree) }));
+  };
+
+  const updateFolderLabel = (node: LibraryFolder["tree"], color?: LabelColor) => {
+    updateFolderNode(node.id, (current) => ({ ...current, labelColor: color }));
+    saveFolderMetadata(node.path, color ? { labelColor: color } : { clearLabel: true });
+  };
+
+  const toggleFolderPinned = (node: LibraryFolder["tree"]) => {
+    const pinned = !node.pinned;
+    updateFolderNode(node.id, (current) => ({ ...current, pinned }));
+    saveFolderMetadata(node.path, { pinned });
+    notify("info", pinned ? `${node.name} pinned to the top of Library.` : `${node.name} unpinned.`);
+  };
 
   const updatePreparationStatus = (
     sound: SoundFile,
@@ -1451,7 +1582,7 @@
           onProgress: (stage, message, nextProgress) => updatePreparationStatus(sound, stage, message, nextProgress),
         });
         const current = sounds.find((item) => item.id === sound.id) || freesoundSounds.find((item) => item.id === sound.id);
-        const nextSound = current ? { ...prepared.sound, favorite: current.favorite } : prepared.sound;
+        const nextSound = current ? { ...prepared.sound, favorite: current.favorite, labelColor: current.labelColor } : prepared.sound;
         if (!hasAudioProcessing(requestedProcessing)) updateSoundRecord(nextSound);
         else {
           cachePreparedProcessing(requestKey, nextSound);
@@ -1491,7 +1622,7 @@
       const existing = new Set(freesoundSounds.map((sound) => sound.id));
       freesoundSounds = [
         ...freesoundSounds,
-        ...page.sounds.filter((sound) => !existing.has(sound.id)).map(mergeFreesoundSessionState),
+        ...hydrateFreesoundResults(page.sounds.filter((sound) => !existing.has(sound.id))),
       ];
       freesoundPage = page.page;
       freesoundHasNext = page.hasNext;
@@ -1529,10 +1660,12 @@
       const result = await scanFolder(chosen, nextAccent(folders.length), (next) => { indexProgress = next; });
       const nextFolders = [...folders, result.folder];
       const nextSounds = [...sounds, ...result.sounds];
-      folders = nextFolders;
-      sounds = nextSounds;
-      persistLibraryFolders(nextFolders);
-      selectedId = result.sounds[0]?.id || "";
+      const hydrated = hydrateLibraryMetadata(nextFolders, nextSounds);
+      folders = hydrated.folders;
+      sounds = hydrated.sounds;
+      persistLibraryFolders(hydrated.folders);
+      selectedId = hydrated.sounds.find((sound) => sound.folderId === result.folder.id)?.id || "";
+      enqueueWaveformAnalysis(hydrated.sounds.filter((sound) => sound.folderId === result.folder.id));
       if (nextFolders.length === 1) {
         tabs = createLibraryTabs();
         activeTabId = "search-library";
@@ -1590,10 +1723,12 @@
           notify("error", error instanceof Error ? error.message : `${folder.name} could not be refreshed.`);
         }
       }
-      folders = nextFolders;
-      sounds = nextSounds;
-      selectedId = nextSounds[0]?.id || "";
-      persistLibraryFolders(nextFolders);
+      const hydrated = hydrateLibraryMetadata(nextFolders, nextSounds);
+      folders = hydrated.folders;
+      sounds = hydrated.sounds;
+      selectedId = hydrated.sounds[0]?.id || "";
+      persistLibraryFolders(hydrated.folders);
+      enqueueWaveformAnalysis(hydrated.sounds);
       const refreshHasWarnings = failedLibraries > 0 || skippedPaths > 0;
       const refreshDetail = refreshHasWarnings
         ? ` - ${failedLibraries} libraries unavailable - ${skippedPaths} paths skipped`
@@ -1922,6 +2057,8 @@
       onQueryChange={(value) => folderQuery = value}
       onAddFolder={addFolder}
       onEditFolder={(id) => { settingsFolderId = id; settingsOpen = true; }}
+      onFolderLabelColor={updateFolderLabel}
+      onToggleFolderPinned={toggleFolderPinned}
       onRescan={rescanAll}
       onClose={() => sidebarOpen = false}
       onLocalSourceEnabled={(enabled) => localSourceEnabled = enabled}
@@ -1964,6 +2101,7 @@
               <button class:is-active={filter === item.id} onclick={() => filter = item.id} type="button">{item.label}{#if item.id === "favorites"}<span class="tiny-badge">{favoriteCount}</span>{/if}</button>
             {/each}
           </div>
+          <ColorLabelPicker color={labelFilter} label="Filter by color label" onChange={(color) => labelFilter = color} />
           <IconButton icon="sliders" label="Open search and library settings" onclick={() => { settingsFolderId = null; settingsOpen = true; }} />
           <IconButton icon="list" label={compactResults ? "Use comfortable result density" : "Use compact result density"} active={compactResults} pressed={compactResults} onclick={toggleResultDensity} />
         </div>
@@ -2032,6 +2170,7 @@
                 onPlay={() => { if (sound.id !== selectedId) { pendingPlayId = sound.id; selectedId = sound.id; } else togglePlay(); }}
                 onInsert={() => { selectedId = sound.id; insertSelected(sound); }}
                 onFavorite={() => toggleFavorite(sound)}
+                onLabelColor={(color) => updateSoundLabel(sound, color)}
                 onDragPrepare={() => prepareSoundForDrag(sound)}
                 onDragStart={(event) => dragSound(sound, event)}
                 onDragEnd={(event) => finishSoundDrag(sound, event)}

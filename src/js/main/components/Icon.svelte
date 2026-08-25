@@ -2,7 +2,7 @@
   export type IconName =
     | "activity" | "add" | "back" | "check" | "chevron" | "close" | "collapse" | "download"
     | "cloud" | "cloudCheck" | "drive" | "drag" | "folder" | "forward" | "heart" | "library" | "list" | "loop"
-    | "lock" | "unlock" | "minus" | "more" | "next" | "pause" | "play" | "previous" | "refresh"
+    | "lock" | "unlock" | "minus" | "more" | "next" | "pause" | "pin" | "play" | "previous" | "refresh"
     | "reverse" | "search" | "settings" | "sliders" | "sparkles" | "stop"
     | "trash" | "volume" | "waveform" | "zoomIn" | "zoomOut";
 
@@ -33,6 +33,7 @@
     more: '<path d="M5 12h.01M12 12h.01M19 12h.01" />',
     next: '<path d="m6 5 10 7L6 19zM18 5v14" />',
     pause: '<path d="M8 5v14M16 5v14" />',
+    pin: '<path d="M7 4h10l-1 7 2 2v2H6v-2l2-2-1-7Z" /><path d="M12 15v6" />',
     play: '<path d="m8 5 11 7-11 7z" />',
     previous: '<path d="m18 5-10 7 10 7zM6 5v14" />',
     refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" /><path d="M21 3v5h-5" />',

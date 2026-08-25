@@ -5,12 +5,14 @@
   import { relativeTime, treeMatchesQuery } from "../ui-utils";
   import Icon from "./Icon.svelte";
   import IconButton from "./IconButton.svelte";
+  import ItemContextMenu from "./ItemContextMenu.svelte";
   import LibraryTreeRow from "./LibraryTreeRow.svelte";
 
   let {
     folders, sounds, selectedFolder, query, indexing, indexProgress, now,
     localSourceEnabled, freesoundLibraryEnabled, freesoundSourceEnabled, freesoundConnected, freesoundCount,
     onSelectFolder, onQueryChange, onAddFolder, onEditFolder, onRescan, onClose,
+    onFolderLabelColor, onToggleFolderPinned,
     onLocalSourceEnabled, onFreesoundSourceEnabled,
     update, updateDismissed, onOpenUpdate, onDismissUpdate,
   }: {
@@ -30,6 +32,8 @@
     onQueryChange: (value: string) => void;
     onAddFolder: () => void;
     onEditFolder: (folderId: string) => void;
+    onFolderLabelColor: (node: LibraryFolder["tree"], color: LibraryFolder["tree"]["labelColor"]) => void;
+    onToggleFolderPinned: (node: LibraryFolder["tree"]) => void;
     onRescan: () => void;
     onClose: () => void;
     onLocalSourceEnabled: (enabled: boolean) => void;
@@ -45,6 +49,31 @@
   let progressLocation = $derived(folderNameFromPath(indexProgress.currentPath));
   let visibleFolders = $derived(folders.filter((folder) => treeMatchesQuery(folder.tree, normalizedQuery)));
   let activeSourceCount = $derived(Number(localSourceEnabled) + Number(freesoundLibraryEnabled && freesoundSourceEnabled));
+  const collectPinned = (foldersToSearch: LibraryFolder[]) => {
+    const pinned: LibraryFolder["tree"][] = [];
+    for (const folder of foldersToSearch) {
+      const pending = [folder.tree];
+      while (pending.length) {
+        const node = pending.shift();
+        if (!node) continue;
+        if (node.pinned) pinned.push(node);
+        pending.unshift(...node.children);
+      }
+    }
+    return pinned;
+  };
+  let pinnedFolders = $derived(collectPinned(folders));
+  let pinnedContextNode = $state<LibraryFolder["tree"] | null>(null);
+  let pinnedContextX = $state(0);
+  let pinnedContextY = $state(0);
+
+  const openPinnedContext = (event: MouseEvent, node: LibraryFolder["tree"]) => {
+    event.preventDefault();
+    event.stopPropagation();
+    pinnedContextNode = node;
+    pinnedContextX = Math.max(8, Math.min(window.innerWidth - 220, event.clientX));
+    pinnedContextY = Math.max(8, Math.min(window.innerHeight - 220, event.clientY));
+  };
 
   const toggleTreeNode = (nodeId: string) => {
     const next = new Set(expandedIds);
@@ -86,6 +115,20 @@
             <span class="library-copy"><strong>All local sounds</strong><small>Every indexed folder</small></span>
             <span class="count-badge">{sounds.length}</span>
           </button>
+          {#if pinnedFolders.length}
+            <div class="pinned-folders">
+              <span class="pinned-folders__label"><Icon name="pin" size={11} /> Pinned</span>
+              {#each pinnedFolders as node (node.id)}
+                <div class={`pinned-folder-row ${node.labelColor ? `has-color-label label-${node.labelColor}` : ""}`}>
+                  <button class:is-selected={selectedFolder === node.id} onclick={() => onSelectFolder(node.id)} oncontextmenu={(event) => openPinnedContext(event, node)} type="button">
+                    <Icon name="folder" size={13} />
+                    <span>{node.name}</span>
+                    <small>{node.totalFileCount}</small>
+                  </button>
+                </div>
+              {/each}
+            </div>
+          {/if}
           {#each visibleFolders as folder (folder.id)}
             <LibraryTreeRow
               node={folder.tree}
@@ -96,6 +139,8 @@
               meta={`Indexed ${relativeTime(folder.indexedAt, now)}`}
               onSelect={onSelectFolder}
               onToggle={toggleTreeNode}
+              onLabelColor={onFolderLabelColor}
+              onTogglePinned={onToggleFolderPinned}
               onEdit={() => onEditFolder(folder.id)}
             />
           {/each}
@@ -129,3 +174,23 @@
     </div>
   {/if}
 </aside>
+
+{#if pinnedContextNode}
+  <ItemContextMenu
+    open
+    x={pinnedContextX}
+    y={pinnedContextY}
+    color={pinnedContextNode.labelColor}
+    pinned={pinnedContextNode.pinned}
+    canPin
+    canEdit={folders.some((folder) => folder.tree.id === pinnedContextNode?.id)}
+    itemName={pinnedContextNode.name}
+    onColor={(color) => onFolderLabelColor(pinnedContextNode!, color)}
+    onTogglePinned={() => onToggleFolderPinned(pinnedContextNode!)}
+    onEdit={() => {
+      const rootFolder = folders.find((folder) => folder.tree.id === pinnedContextNode?.id);
+      if (rootFolder) onEditFolder(rootFolder.id);
+    }}
+    onClose={() => pinnedContextNode = null}
+  />
+{/if}

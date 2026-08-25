@@ -4,6 +4,7 @@
     channels = [],
     progress = 0,
     compact = false,
+    real = false,
     zoom = 1,
     reversed = false,
   }: {
@@ -11,6 +12,7 @@
     channels?: Float32Array[];
     progress?: number;
     compact?: boolean;
+    real?: boolean;
     zoom?: number;
     reversed?: boolean;
   } = $props();
@@ -34,8 +36,22 @@
     return peaks;
   };
 
-  const compactPath = (sourceChannels: Float32Array[], fallback: Float32Array, waveformZoom: number, waveformReversed: boolean) => {
-    const peakChannels = sourceChannels.length ? sourceChannels : [fallbackPeaks(fallback)];
+  const realPeaks = (source: Float32Array) => {
+    const peaks = new Float32Array(MINI_POINTS * 2);
+    for (let index = 0; index < MINI_POINTS; index += 1) {
+      const position = (index / Math.max(1, MINI_POINTS - 1)) * Math.max(0, source.length - 1);
+      const left = Math.floor(position);
+      const right = Math.min(source.length - 1, left + 1);
+      const mix = position - left;
+      const amplitude = Math.max(0, Math.min(1, source[left] * (1 - mix) + source[right] * mix));
+      peaks[index * 2] = -amplitude;
+      peaks[index * 2 + 1] = amplitude;
+    }
+    return peaks;
+  };
+
+  const compactPath = (sourceChannels: Float32Array[], fallback: Float32Array, waveformZoom: number, waveformReversed: boolean, waveformReal: boolean) => {
+    const peakChannels = sourceChannels.length ? sourceChannels : [waveformReal ? realPeaks(fallback) : fallbackPeaks(fallback)];
     const totalBins = Math.max(1, Math.floor(peakChannels[0].length / 2));
     const visibleBins = Math.max(2, Math.floor(totalBins / waveformZoom));
     const renderBins = Math.min(MINI_POINTS, visibleBins);
@@ -74,7 +90,7 @@
     return `M${top.join(" L")} L${bottom.join(" L")} Z`;
   };
 
-  let path = $derived(compactPath(channels, values, zoom, reversed));
+  let path = $derived(compactPath(channels, values, zoom, reversed, real));
   let playedPercent = $derived(Math.max(0, Math.min(100, progress * 100)));
 </script>
 

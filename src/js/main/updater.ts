@@ -50,6 +50,7 @@ const readCache = (): UpdateCache | null => {
   try {
     const parsed = JSON.parse(localStorage.getItem(CACHE_KEY) || "null") as UpdateCache | null;
     if (!parsed || typeof parsed.checkedAt !== "number" || !parsed.state) return null;
+    if (parsed.state.currentVersion !== INSTALLED_VERSION) return null;
     if (parsed.state.status !== "current" && parsed.state.status !== "available") return null;
     return parsed;
   } catch (_error) {

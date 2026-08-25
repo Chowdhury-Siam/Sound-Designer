@@ -4,9 +4,10 @@
   import { formatDuration, formatSize } from "../ui-utils";
   import Icon from "./Icon.svelte";
   import IconButton from "./IconButton.svelte";
+  import ItemContextMenu from "./ItemContextMenu.svelte";
   import Waveform from "./Waveform.svelte";
 
-  let { sound, channels = [], selected, playing, progress, preparation, dragHint, onSelect, onPlay, onInsert, onFavorite, onDragPrepare, onDragStart, onDragEnd }: {
+  let { sound, channels = [], selected, playing, progress, preparation, dragHint, onSelect, onPlay, onInsert, onFavorite, onLabelColor, onDragPrepare, onDragStart, onDragEnd }: {
     sound: SoundFile;
     channels?: Float32Array[];
     selected: boolean;
@@ -18,6 +19,7 @@
     onPlay: () => void;
     onInsert: () => void;
     onFavorite: () => void;
+    onLabelColor: (color: SoundFile["labelColor"]) => void;
     onDragPrepare: () => void;
     onDragStart: (event: DragEvent) => void;
     onDragEnd: (event: DragEvent) => void;
@@ -38,6 +40,17 @@
     ? sound.path ? "Freesound · downloaded for this project" : "Freesound cloud library"
     : "Local sound library");
   let dragPrepareTimer = 0;
+  let contextOpen = $state(false);
+  let contextX = $state(0);
+  let contextY = $state(0);
+
+  const openContextMenu = (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    contextX = Math.max(8, Math.min(window.innerWidth - 220, event.clientX));
+    contextY = Math.max(8, Math.min(window.innerHeight - 160, event.clientY));
+    contextOpen = true;
+  };
 
   const requestDragPreparation = () => {
     if (dragPrepareTimer) window.clearTimeout(dragPrepareTimer);
@@ -62,7 +75,7 @@
 </script>
 
 <div
-  class={`sound-row accent-${sound.accent} ${selected ? "is-selected" : ""}`}
+  class={`sound-row accent-${sound.accent} ${selected ? "is-selected" : ""} ${sound.labelColor ? `has-color-label label-${sound.labelColor}` : ""}`}
   class:is-cloud={isCloud}
   class:is-preparing={isPreparing}
   draggable={Boolean(sound.path) || isCloud}
@@ -73,6 +86,7 @@
   onpointercancel={cancelScheduledDragPreparation}
   ondragstart={(event) => { requestDragPreparation(); onDragStart(event); }}
   ondragend={(event) => { cancelScheduledDragPreparation(); onDragEnd(event); }}
+  oncontextmenu={openContextMenu}
   onkeydown={(event) => {
     if (event.key === "Enter") onSelect();
   }}
@@ -115,9 +129,18 @@
       <strong>{sound.name}</strong>
       {#if isCloud && sound.creator}<small class="sound-creator">by {sound.creator}</small>{/if}
     </div>
-    <Waveform compact values={sound.waveform} {channels} progress={playing ? progress : 0} />
+    <Waveform compact values={sound.waveform} real={sound.waveformReal === true} {channels} progress={playing ? progress : 0} />
   </div>
   <div class="sound-meta"><span>{sound.duration ? formatDuration(sound.duration) : "—:—"}</span><small>{sound.extension.toUpperCase()} · {formatSize(sound.size)}</small></div>
   <span class="match-score tooltip" data-tooltip="Search relevance">{score}%</span>
   <IconButton icon="heart" label={sound.favorite ? "Remove from favorites" : "Add to favorites"} active={sound.favorite} onclick={(event) => { event.stopPropagation(); onFavorite(); }} class="row-favorite" />
 </div>
+<ItemContextMenu
+  open={contextOpen}
+  x={contextX}
+  y={contextY}
+  color={sound.labelColor}
+  itemName={sound.name}
+  onColor={onLabelColor}
+  onClose={() => contextOpen = false}
+/>

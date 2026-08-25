@@ -2,6 +2,8 @@ export type HostApp = "premiere" | "aftereffects" | "browser" | "unknown";
 
 export type AccentName = "graphite";
 
+export type LabelColor = "red" | "orange" | "yellow" | "green" | "blue" | "purple" | "gray";
+
 export type SoundSource = "local" | "freesound";
 
 export type AudioConversionPolicy = "unsupported" | "always" | "never";
@@ -53,6 +55,8 @@ export type LibraryTreeNode = {
   path: string;
   directFileCount: number;
   totalFileCount: number;
+  labelColor?: LabelColor;
+  pinned?: boolean;
   children: LibraryTreeNode[];
 };
 
@@ -78,7 +82,9 @@ export type SoundFile = {
   duration: number;
   tags: string[];
   waveform: Float32Array;
+  waveformReal?: boolean;
   accent: AccentName;
+  labelColor?: LabelColor;
   favorite?: boolean;
   source?: SoundSource;
   sourceId?: string;
