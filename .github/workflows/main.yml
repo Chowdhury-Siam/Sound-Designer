@@ -36,10 +36,13 @@ jobs:
           SOUNDDESIGNER_ZXP_PASSWORD: ${{ secrets.SOUNDDESIGNER_ZXP_PASSWORD }}
         run: bun run release:package
 
-      - name: Publish GitHub Release
+      - name: Prepare signed GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          name: SoundDesigner ${{ github.ref_name }}
+          draft: true
+          body_path: .github/releases/${{ github.ref_name }}.md
           files: |
             release/SoundDesigner-*.zxp
             release/SoundDesigner-*.zxp.sha256
+            .github/assets/SoundDesigner-v*.png

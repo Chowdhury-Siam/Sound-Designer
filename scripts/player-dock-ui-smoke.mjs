@@ -1,0 +1,56 @@
+import assert from "node:assert/strict";
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
+const browser = await chromium.launch({headless: true, ...(process.env.CHROME_PATH ? {executablePath: process.env.CHROME_PATH} : {})});
+try {
+  const page = await browser.newPage({viewport: {width: 800, height: 475}});
+  page.setDefaultTimeout(8000);
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto("http://127.0.0.1:3000/main/?demo");
+  await page.getByRole("button", {name: "Keep library sidebar visible"}).click();
+  await page.locator(".sound-row").click();
+  await page.waitForTimeout(400);
+  for (const [width, height] of [[1200,700], [800,475], [700,400], [640,600], [480,650], [400,450], [320,600], [280,500]]) {
+    await page.setViewportSize({width, height});
+    await page.waitForTimeout(100);
+    const layout = await page.evaluate(() => {
+      const rect = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom,right:r.right}; };
+      const controls = [...document.querySelectorAll(".player-dock button")].filter(el => el.getClientRects().length);
+      const clipped = controls.filter(el => {const r = el.getBoundingClientRect();return r.left < 0 || r.right > innerWidth + 1 || r.top < 0 || r.bottom > innerHeight + 1;}).map(el=>el.getAttribute("aria-label") || el.textContent);
+      const blocked = controls.filter(el => {if(el.disabled) return false; const r = el.getBoundingClientRect(); return !el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}).map(el=>el.getAttribute("aria-label") || el.textContent);
+      return {clipped, blocked, dock:rect(".player-dock"), results:rect(".results-list"), waveform:rect(".channel-range-target")};
+    });
+    assert.deepEqual(layout.clipped, [], `Clipped player controls at ${width}×${height}`);
+    assert.deepEqual(layout.blocked, [], `Overlapping player controls at ${width}×${height}`);
+    assert.ok(layout.results.height >= 65 && layout.results.bottom <= layout.dock.y + 1, `Results remain usable above player at ${width}×${height}`);
+    assert.ok(layout.waveform.height >= 25 && layout.waveform.width >= 150, `Waveform must remain usable for segment selection at ${width}×${height}: ${JSON.stringify(layout.waveform)}`);
+    if (width > 640) assert.ok(layout.dock.height <= 126, "Wide player fits a single dock");
+    await page.getByRole("button", {name: "Audio effects", exact: true}).click();
+    const fx = await page.locator(".effects-rack").boundingBox();
+    assert.ok(fx.y >= 0 && fx.y + fx.height <= layout.dock.y, "FX floats above dock without covering waveform");
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator(".effects-rack").count(), 0);
+    if (process.env.SCREENSHOT_DIRECTORY && [800,400].includes(width)) await page.screenshot({path:`${process.env.SCREENSHOT_DIRECTORY}/player-${width}.png`});
+  }
+  await page.setViewportSize({width:800,height:475});
+  const waveform = page.locator(".channel-range-target");
+  const range = await waveform.boundingBox();
+  await page.mouse.move(range.x + range.width * .2, range.y + range.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(range.x + range.width * .6, range.y + range.height / 2, {steps: 5});
+  await page.mouse.up();
+  assert.ok(Number(await page.getByRole("slider", {name:"Segment end", exact:true}).getAttribute("aria-valuenow")) > 4, "Dragging selects an audio range");
+  await page.getByRole("button", {name:"Clear", exact:true}).click();
+  await waveform.focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await page.getByRole("slider", {name:"Segment start", exact:true}).count(), 1);
+  await page.getByRole("slider", {name:"Segment end", exact:true}).press("ArrowRight");
+  await page.getByRole("button", {name:"Reverse selected segment"}).click();
+  assert.equal(await page.getByRole("button", {name:"Reverse selected segment"}).getAttribute("aria-pressed"), "true");
+  await page.getByRole("button", {name:"Zoom waveform in"}).click();
+  assert.equal(await page.locator(".zoom-value").textContent(), "1.5×");
+  await page.getByRole("button", {name:"Close preview and return to browsing"}).click();
+  assert.ok((await page.locator(".player-dock").boundingBox()).height <= 64);
+  assert.deepEqual(errors, []);
+  console.log("Player dock passed eight sizes: usable results, unclipped controls, FX overlay/Escape, segment keyboard editing, reverse, zoom and close.");
+} finally { await browser.close(); }

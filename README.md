@@ -1,6 +1,6 @@
 <div align="center">
 
-<img alt="SoundDesigner" src=".github/assets/SoundDesigner.png" width="720">
+<img alt="SoundDesigner v1.0.3 — More room. More control." src=".github/assets/SoundDesigner-v1.0.3.png" width="800">
 
 **Find it. Shape it. Drop it into the edit.**
 
@@ -23,6 +23,8 @@ A fast, project-aware sound-effects workspace for **Adobe Premiere Pro** and **A
 ---
 
 ## 🧭 Explore
+
+**New in v1.0.3:** Cloud SFX, SFX Assistant for After Effects, Favorites collections, waveform tiles, Quick FX and a compact player dock. [Read the release notes](.github/releases/v1.0.3.md).
 
 - [Meet SoundDesigner](#meet-sounddesigner)
 - [Features](#features)

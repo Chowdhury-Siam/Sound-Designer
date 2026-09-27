@@ -1,6 +1,10 @@
 import type { AudioNormalization, AudioProcessingSettings } from "./types";
 
 export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
+  bypass: false,
+  normalize: false,
+  echoMix: 0,
+  reverbMix: 0,
   reverse: false,
   gainDb: 0,
   pitchSemitones: 0,
@@ -21,6 +25,10 @@ const RENDER_BUDGET_MS = 6;
 const CHECK_INTERVAL = 4096;
 
 export const normalizeAudioProcessing = (value?: Partial<AudioProcessingSettings> | null): AudioProcessingSettings => ({
+  bypass: value?.bypass === true,
+  normalize: value?.normalize === true,
+  echoMix: Math.round(Math.max(0, Math.min(0.6, Number(value?.echoMix) || 0)) * 100) / 100,
+  reverbMix: Math.round(Math.max(0, Math.min(0.6, Number(value?.reverbMix) || 0)) * 100) / 100,
   reverse: Boolean(value?.reverse),
   gainDb: Math.round(Math.max(-24, Math.min(12, Number(value?.gainDb) || 0)) * 2) / 2,
   pitchSemitones: Math.round(Math.max(-12, Math.min(12, Number(value?.pitchSemitones) || 0)) * 2) / 2,
@@ -28,10 +36,11 @@ export const normalizeAudioProcessing = (value?: Partial<AudioProcessingSettings
   preservePitch: value?.preservePitch !== false,
 });
 
-export const audioProcessingKey = (value?: Partial<AudioProcessingSettings> | null) => {
+export const audioProcessingKey = (value?: Partial<AudioProcessingSettings> | null): string => {
   const settings = normalizeAudioProcessing(value);
+  if (settings.bypass) return audioProcessingKey(DEFAULT_AUDIO_PROCESSING);
   const pitchLock = Math.abs(settings.speed - 1) < 0.001 || settings.preservePitch;
-  return [settings.reverse ? 1 : 0, settings.gainDb, settings.pitchSemitones, settings.speed, pitchLock ? 1 : 0].join(":");
+  return [settings.reverse ? 1 : 0, settings.gainDb, settings.pitchSemitones, settings.speed, pitchLock ? 1 : 0, settings.normalize ? 1 : 0, settings.echoMix, settings.reverbMix].join(":");
 };
 
 export const hasAudioProcessing = (value?: Partial<AudioProcessingSettings> | null) => audioProcessingKey(value) !== audioProcessingKey(DEFAULT_AUDIO_PROCESSING);
@@ -158,7 +167,7 @@ export const renderAudioProcessing = async (
   frameEnd = audioBuffer.length,
 ): Promise<RenderedAudio> => {
   abortIfNeeded(signal);
-  const settings = normalizeAudioProcessing(processing);
+  const settings = normalizeAudioProcessing(processing?.bypass ? DEFAULT_AUDIO_PROCESSING : processing);
   const boundedStart = Math.max(0, Math.min(audioBuffer.length - 1, Math.floor(frameStart)));
   const boundedEnd = Math.max(boundedStart + 1, Math.min(audioBuffer.length, Math.ceil(frameEnd)));
   const sourceLength = boundedEnd - boundedStart;
@@ -183,8 +192,32 @@ export const renderAudioProcessing = async (
   if (Math.abs(effectivePitch - 1) > 0.0001) channels = await resampleChannels(channels, effectivePitch, signal);
   if (channels[0].length !== targetLength) channels = await stretchChannels(channels, targetLength, audioBuffer.sampleRate, signal);
 
+  // Deterministic delay taps: the same render path is used for audition and
+  // imported PCM, with bounded tails and cooperative cancellation.
+  const echo = settings.echoMix || 0;
+  const reverb = settings.reverbMix || 0;
+  if (echo || reverb) {
+    const tail = Math.round(audioBuffer.sampleRate * (echo ? 0.9 : 0.32));
+    const dryLength = channels[0].length;
+    const effected = channels.map(() => new Float32Array(dryLength + tail));
+    const taps = [
+      ...(echo ? [[0.3, echo], [0.6, echo * 0.45], [0.9, echo * 0.2]] : []),
+      ...(reverb ? [[0.031, reverb * 0.5], [0.047, reverb * 0.4], [0.071, reverb * 0.3], [0.113, reverb * 0.24], [0.173, reverb * 0.18], [0.251, reverb * 0.12], [0.32, reverb * 0.06]] : []),
+    ].map(([seconds, gain]) => [Math.round(seconds * audioBuffer.sampleRate), gain]);
+    for (let c = 0; c < channels.length; c += 1) {
+      effected[c].set(channels[c]);
+      for (const [delay, amount] of taps) {
+        for (let i = 0; i < dryLength; i += 1) {
+          effected[c][i + delay] += channels[c][i] * amount;
+          if (i % CHECK_INTERVAL === 0) await yieldToPanel();
+        }
+      }
+    }
+    channels = effected;
+  }
   let peak = 0;
-  if (normalization === "peak-minus-one") {
+  const normalizing = settings.normalize || normalization === "peak-minus-one";
+  if (normalizing) {
     for (let channelIndex = 0; channelIndex < channels.length; channelIndex += 1) {
       const channel = channels[channelIndex];
       for (let index = 0; index < channel.length; index += 1) {
@@ -193,14 +226,14 @@ export const renderAudioProcessing = async (
       }
     }
   }
-  const normalizationGain = normalization === "peak-minus-one" && peak > 0 ? TARGET_PEAK / peak : 1;
+  const normalizationGain = normalizing && peak > 0 ? TARGET_PEAK / peak : 1;
   const userGain = Math.pow(10, settings.gainDb / 20);
   const gain = normalizationGain * userGain;
-  if (Math.abs(gain - 1) > 0.000001) {
+  if (Math.abs(gain - 1) > 0.000001 || echo || reverb) {
     for (let channelIndex = 0; channelIndex < channels.length; channelIndex += 1) {
       const channel = channels[channelIndex];
       for (let index = 0; index < channel.length; index += 1) {
-        channel[index] *= gain;
+        channel[index] = Math.max(-1, Math.min(1, channel[index] * gain));
         if (index > 0 && index % CHECK_INTERVAL === 0) await yieldToPanel();
       }
     }

@@ -44,6 +44,16 @@ export const findTreeNode = (node: LibraryTreeNode, nodeId: string): LibraryTree
   return null;
 };
 
+export const findTreePath = (roots: LibraryTreeNode[], nodeId: string): LibraryTreeNode[] => {
+  const pending = roots.map(node => ({ node, path: [node] }));
+  while (pending.length) {
+    const current = pending.pop()!;
+    if (current.node.id === nodeId) return current.path;
+    for (const child of current.node.children) pending.push({ node: child, path: [...current.path, child] });
+  }
+  return [];
+};
+
 export const countTreeNodes = (node: LibraryTreeNode): number =>
   1 + node.children.reduce((count, child) => count + countTreeNodes(child), 0);
 

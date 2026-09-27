@@ -1,7 +1,7 @@
 <script lang="ts">
   export type IconName =
     | "activity" | "add" | "back" | "check" | "chevron" | "close" | "collapse" | "download"
-    | "cloud" | "cloudCheck" | "drive" | "drag" | "folder" | "forward" | "heart" | "library" | "list" | "loop"
+    | "cloud" | "cloudCheck" | "drive" | "drag" | "folder" | "forward" | "grid" | "heart" | "library" | "list" | "loop"
     | "lock" | "unlock" | "minus" | "more" | "next" | "pause" | "pin" | "play" | "previous" | "refresh"
     | "reverse" | "search" | "settings" | "sliders" | "sparkles" | "stop"
     | "trash" | "volume" | "waveform" | "zoomIn" | "zoomOut";
@@ -24,6 +24,7 @@
     folder: '<path d="M3 7.5h7l2-2h9v13H3z" />',
     forward: '<path d="m9 18 6-6-6-6" />',
     heart: '<path d="M20.2 5.8a5.5 5.5 0 0 0-7.8 0L12 6.2l-.4-.4a5.5 5.5 0 0 0-7.8 7.8L12 21l8.2-7.4a5.5 5.5 0 0 0 0-7.8Z" />',
+    grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
     library: '<path d="M4 4h4v16H4zM10 4h4v16h-4zM16 6l4-1 2 14-4 1z" />',
     list: '<path d="M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01" />',
     loop: '<path d="M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4m14-1v2a3 3 0 0 1-3 3H3" />',

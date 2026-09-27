@@ -24,10 +24,10 @@ The panel checks the public GitHub repository `iboyshanto/SoundDesigner` for the
 3. Install and smoke-test `release/SoundDesigner-v1.2.3.zxp` in supported Premiere Pro and After Effects versions on both operating systems.
    Include a saved-project Freesound download, unsupported local audio conversion, optional −1 dBFS normalization, Project-panel `SoundDesigner` organization, and a project-switch cache check.
 4. Commit the source/version change and push it. Create the tag `v1.2.3` from that exact commit.
-5. Create a non-draft, non-prerelease GitHub Release from the tag and upload:
+5. Add `.github/releases/vX.Y.Z.md` with the release notes before tagging. The tag workflow builds with the persistent publisher certificate and creates a draft release containing:
    - `SoundDesigner-v1.2.3.zxp`
    - `SoundDesigner-v1.2.3.zxp.sha256`
-6. Publish the release. Existing installations will discover it during their next automatic check (at most once per 24 hours), or immediately from Settings > Updates > Check now.
+6. Verify the draft's ZXP signature, manifest version and checksum, then publish it as the latest stable release. Existing installations will discover it during their next automatic check (at most once per 24 hours), or immediately from Settings > Updates > Check now. Confirm the public latest-release endpoint and test the updater with the previous and new installed versions.
 
 ## Safety contract
 

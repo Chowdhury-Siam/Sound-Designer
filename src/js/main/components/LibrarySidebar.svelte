@@ -1,14 +1,19 @@
 <script lang="ts">
+  import { tick } from "svelte";
+
   import type { UpdateState } from "../updater";
   import type { LibraryFolder, ScanProgress, SoundFile } from "../types";
   import { folderNameFromPath } from "../library";
-  import { relativeTime, treeMatchesQuery } from "../ui-utils";
+  import { findTreePath, relativeTime, treeMatchesQuery } from "../ui-utils";
   import Icon from "./Icon.svelte";
   import IconButton from "./IconButton.svelte";
   import ItemContextMenu from "./ItemContextMenu.svelte";
   import LibraryTreeRow from "./LibraryTreeRow.svelte";
+  import type { FavoriteCollection } from "../libraryMetadata";
 
   let {
+    collections, favoriteSounds, favoriteSelected, onSelectFavorites,
+    cloudLibraryEnabled, onCloudLibraryEnabled,
     folders, sounds, selectedFolder, query, indexing, indexProgress, now,
     localSourceEnabled, freesoundLibraryEnabled, freesoundSourceEnabled, freesoundConnected, freesoundCount,
     onSelectFolder, onQueryChange, onAddFolder, onEditFolder, onRescan, onClose,
@@ -16,6 +21,12 @@
     onLocalSourceEnabled, onFreesoundSourceEnabled,
     update, updateDismissed, onOpenUpdate, onDismissUpdate,
   }: {
+    collections: FavoriteCollection[];
+    favoriteSounds: SoundFile[];
+    favoriteSelected: string | null;
+    onSelectFavorites: (id: string) => void;
+    cloudLibraryEnabled: boolean;
+    onCloudLibraryEnabled: (enabled: boolean) => void;
     folders: LibraryFolder[];
     sounds: SoundFile[];
     selectedFolder: string;
@@ -28,7 +39,7 @@
     freesoundSourceEnabled: boolean;
     freesoundConnected: boolean;
     freesoundCount: number;
-    onSelectFolder: (folderId: string) => void;
+    onSelectFolder: (folderId: string, keepOpen?: boolean) => void;
     onQueryChange: (value: string) => void;
     onAddFolder: () => void;
     onEditFolder: (folderId: string) => void;
@@ -45,10 +56,14 @@
   } = $props();
 
   let expandedIds = $state(new Set<string>());
+  let favoritesExpanded = $state(false);
+  let expandedCollectionIds = $state(new Set<string>());
+  let sidebarElement = $state<HTMLElement | null>(null);
+  let revealGeneration = 0;
   let normalizedQuery = $derived(query.trim().toLowerCase());
   let progressLocation = $derived(folderNameFromPath(indexProgress.currentPath));
   let visibleFolders = $derived(folders.filter((folder) => treeMatchesQuery(folder.tree, normalizedQuery)));
-  let activeSourceCount = $derived(Number(localSourceEnabled) + Number(freesoundLibraryEnabled && freesoundSourceEnabled));
+  let activeSourceCount = $derived(Number(localSourceEnabled) + Number(cloudLibraryEnabled) + Number(freesoundLibraryEnabled && freesoundSourceEnabled));
   const collectPinned = (foldersToSearch: LibraryFolder[]) => {
     const pinned: LibraryFolder["tree"][] = [];
     for (const folder of foldersToSearch) {
@@ -66,6 +81,32 @@
   let pinnedContextNode = $state<LibraryFolder["tree"] | null>(null);
   let pinnedContextX = $state(0);
   let pinnedContextY = $state(0);
+  let orderedCollections = $derived.by(() => {
+    const result: { item: FavoriteCollection; depth: number }[] = [];
+    const visited = new Set<string>();
+    const visit = (parent: string, depth: number) => {
+      for (const item of collections.filter(item => item.parentId === parent)) {
+        if (visited.has(item.id)) continue;
+        visited.add(item.id); result.push({ item, depth });
+        if (expandedCollectionIds.has(item.id)) visit(item.id, depth + 1);
+      }
+    };
+    visit("", 0);
+    return result;
+  });
+  const collectionPath = (item: FavoriteCollection) => {
+    const parts = [item.name]; const visited = new Set([item.id]); let parent = item.parentId;
+    while (parent && !visited.has(parent)) {
+      visited.add(parent); const node = collections.find(collection => collection.id === parent); if (!node) break;
+      parts.unshift(node.name); parent = node.parentId;
+    }
+    return `Favorites / ${parts.join(" / ")}`;
+  };
+  const toggleCollection = (id: string) => {
+    const next = new Set(expandedCollectionIds);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    expandedCollectionIds = next;
+  };
 
   const openPinnedContext = (event: MouseEvent, node: LibraryFolder["tree"]) => {
     event.preventDefault();
@@ -81,9 +122,26 @@
     else next.add(nodeId);
     expandedIds = next;
   };
+  const revealPinnedFolder = async (nodeId: string) => {
+    const generation = ++revealGeneration;
+    const path = findTreePath(folders.map(folder => folder.tree), nodeId);
+    if (!path.length) return;
+    onQueryChange("");
+    if (!localSourceEnabled) onLocalSourceEnabled(true);
+    expandedIds = new Set([...expandedIds, ...path.map(node => node.id)]);
+    onSelectFolder(nodeId, true);
+    await tick();
+    if (generation !== revealGeneration || !sidebarElement?.isConnected) return;
+    const row = Array.from(sidebarElement.querySelectorAll<HTMLElement>("[data-library-node]"))
+      .find(element => element.dataset.libraryNode === nodeId);
+    const list = sidebarElement.querySelector<HTMLElement>(".library-list");
+    if (!row || !list) return;
+    list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top - 12;
+    row.querySelector<HTMLButtonElement>(".library-tree-select")?.focus({ preventScroll: true });
+  };
 </script>
 
-<aside class="library-panel">
+<aside bind:this={sidebarElement} class="library-panel">
   <div class="panel-heading">
     <div><span class="eyebrow">Library</span><strong>{activeSourceCount} {activeSourceCount === 1 ? "source" : "sources"} active</strong></div>
     <div class="heading-actions">
@@ -94,6 +152,21 @@
   </div>
 
   <div class="library-list">
+    <div class="favorite-library-section">
+      <div class="favorite-library-heading">
+        <button class="tree-expander tooltip" class:is-expanded={favoritesExpanded} data-tooltip={favoritesExpanded ? "Hide favorite collections" : "Show favorite collections"} aria-label={favoritesExpanded ? "Collapse Favorites collections" : "Expand Favorites collections"} aria-expanded={favoritesExpanded} onclick={() => favoritesExpanded = !favoritesExpanded} type="button"><Icon name="chevron" size={12} /></button>
+        <button class:is-selected={favoriteSelected !== null} class="favorite-library-row tooltip" data-tooltip="Favorites across every folder" onclick={() => onSelectFavorites("all")} type="button"><Icon name="heart" size={14} /><span>Favorites</span><small>{new Set(favoriteSounds.map(sound => sound.id)).size}</small></button>
+      </div>
+      {#if favoritesExpanded}
+      <button class:is-selected={favoriteSelected === ""} class="favorite-library-row tooltip" data-tooltip="Favorites without a collection" onclick={() => onSelectFavorites("")} type="button"><Icon name="folder" size={12} /><span>Main Favorites</span><small>{favoriteSounds.filter(sound => !sound.favoriteCollection).length}</small></button>
+      {#each orderedCollections as { item } (item.id)}
+        <div class="favorite-library-heading">
+          <button class="tree-expander" class:is-expanded={expandedCollectionIds.has(item.id)} disabled={!collections.some(child => child.parentId === item.id)} aria-label={`${expandedCollectionIds.has(item.id) ? "Collapse" : "Expand"} ${item.name} collection`} aria-expanded={expandedCollectionIds.has(item.id)} onclick={() => toggleCollection(item.id)} type="button"><Icon name="chevron" size={12} /></button>
+          <button class:is-selected={favoriteSelected === item.id} class="favorite-library-row tooltip" data-tooltip={collectionPath(item)} onclick={() => onSelectFavorites(item.id)} type="button"><Icon name="folder" size={12} /><span>{item.name}</span><small>{favoriteSounds.filter(sound => sound.favoriteCollection === item.id).length}</small></button>
+        </div>
+      {/each}
+      {/if}
+    </div>
     <div aria-label="Search sources" class="library-sources" role="group">
       <label class:is-active={localSourceEnabled} class="library-source-row">
         <input checked={localSourceEnabled} onchange={(event) => onLocalSourceEnabled(event.currentTarget.checked)} type="checkbox" />
@@ -110,7 +183,7 @@
               {#if query}<IconButton icon="close" label="Clear library filter" onclick={() => onQueryChange("")} />{/if}
             </label>
           {/if}
-          <button class:is-selected={selectedFolder === "all"} class="library-item library-item--all" onclick={() => onSelectFolder("all")} type="button">
+          <button class:is-selected={selectedFolder === "all" && favoriteSelected === null} class="library-item library-item--all" onclick={() => onSelectFolder("all")} type="button">
             <span class="library-icon"><Icon name="library" /></span>
             <span class="library-copy"><strong>All local sounds</strong><small>Every indexed folder</small></span>
             <span class="count-badge">{sounds.length}</span>
@@ -120,7 +193,7 @@
               <span class="pinned-folders__label"><Icon name="pin" size={11} /> Pinned</span>
               {#each pinnedFolders as node (node.id)}
                 <div class={`pinned-folder-row ${node.labelColor ? `has-color-label label-${node.labelColor}` : ""}`}>
-                  <button class:is-selected={selectedFolder === node.id} onclick={() => onSelectFolder(node.id)} oncontextmenu={(event) => openPinnedContext(event, node)} type="button">
+                  <button class:is-selected={selectedFolder === node.id && favoriteSelected === null} class="tooltip" data-tooltip={`Reveal ${node.name} in library tree · ${node.totalFileCount} sounds including subfolders · ${node.directFileCount} direct`} onclick={() => revealPinnedFolder(node.id)} oncontextmenu={(event) => openPinnedContext(event, node)} type="button">
                     <Icon name="folder" size={13} />
                     <span>{node.name}</span>
                     <small>{node.totalFileCount}</small>
@@ -133,7 +206,7 @@
             <LibraryTreeRow
               node={folder.tree}
               depth={0}
-              selectedId={selectedFolder}
+              selectedId={favoriteSelected === null ? selectedFolder : ""}
               {expandedIds}
               filterQuery={normalizedQuery}
               meta={`Indexed ${relativeTime(folder.indexedAt, now)}`}
@@ -146,6 +219,12 @@
           {/each}
         </div>
       {/if}
+      <label class:is-active={cloudLibraryEnabled} class="library-source-row">
+        <input checked={cloudLibraryEnabled} onchange={(event) => onCloudLibraryEnabled(event.currentTarget.checked)} type="checkbox" />
+        <span class="source-check"><Icon name="check" size={11} /></span>
+        <span class="source-icon source-icon--cloud"><Icon name="cloud" size={14} /></span>
+        <span class="library-copy"><strong>Cloud SFX</strong><small>Search the online library</small></span>
+      </label>
       {#if freesoundLibraryEnabled}
         <label class:is-active={freesoundSourceEnabled} class="library-source-row">
           <input checked={freesoundSourceEnabled} onchange={(event) => onFreesoundSourceEnabled(event.currentTarget.checked)} type="checkbox" />

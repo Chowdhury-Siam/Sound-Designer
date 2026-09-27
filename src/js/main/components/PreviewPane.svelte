@@ -1,17 +1,17 @@
 <script lang="ts">
+  import { isCloudSound } from "../cloudLibrary";
+
   import type { AudioProcessingSettings, AudioSegmentSelection, SoundFile } from "../types";
   import { formatDuration, formatSize } from "../ui-utils";
   import { freesoundLicenseLabel } from "../freesound";
-  import Icon from "./Icon.svelte";
   import IconButton from "./IconButton.svelte";
   import ChannelWaveform from "./ChannelWaveform.svelte";
-  import EffectsRack from "./EffectsRack.svelte";
+  import ToolbarPopover from "./ToolbarPopover.svelte";
 
   let {
     sound, channels, channelsLoading, progress, zoom, reversed, selection, segmentPreparing, segmentReady,
-    effectsOpen, processing, processingBusy, processingError,
     onSeek, onZoomIn, onZoomOut, onSelectionChange, onSegmentDragStart, onSegmentDragEnd,
-    onProcessing, onResetProcessing, onCloseEffects,
+    onProcessing, onClose,
   }: {
     sound: SoundFile | null;
     channels: Float32Array[];
@@ -22,10 +22,6 @@
     selection: AudioSegmentSelection | null;
     segmentPreparing: boolean;
     segmentReady: boolean;
-    effectsOpen: boolean;
-    processing: AudioProcessingSettings;
-    processingBusy: boolean;
-    processingError: string;
     onSeek: (progress: number) => void;
     onZoomIn: () => void;
     onZoomOut: () => void;
@@ -33,8 +29,7 @@
     onSegmentDragStart: (event: DragEvent) => void;
     onSegmentDragEnd: (event: DragEvent) => void;
     onProcessing: (patch: Partial<AudioProcessingSettings>) => void;
-    onResetProcessing: () => void;
-    onCloseEffects: () => void;
+    onClose: () => void;
   } = $props();
 
   const fallbackWaveform = new Float32Array([0]);
@@ -194,9 +189,9 @@
   };
 </script>
 
-<section class:has-effects={effectsOpen} class="preview-pane">
+<section class="preview-pane">
   <div class="preview-heading">
-    <div><span class="eyebrow">Spectrum preview</span><strong>{sound ? sound.name : "Nothing selected"}</strong></div>
+    <div class="preview-caption"><span class="eyebrow">Waveform</span></div>
     <div class="preview-tools">
       {#if selection}
         <span aria-live="polite" class="segment-readout">{formatPreciseTime(selection.start)}–{formatPreciseTime(selection.end)}</span>
@@ -205,6 +200,16 @@
       <span class="zoom-value">{zoom.toFixed(1)}×</span>
       <IconButton icon="zoomOut" label="Zoom waveform out" onclick={onZoomOut} disabled={zoom <= 1} />
       <IconButton icon="zoomIn" label="Zoom waveform in" onclick={onZoomIn} disabled={zoom >= 3} />
+      <ToolbarPopover icon="more" label="Sound details">
+        <div class="sound-details-popover">
+          <strong>{sound?.name || "Nothing selected"}</strong>
+          <span>{sound?.extension.toUpperCase() || "—"} · {sound ? formatSize(sound.size) : "—"} · {duration ? formatDuration(duration) : "On load"}</span>
+          <span>{sound && isCloudSound(sound) ? sound.source === "scorpion" ? "Cloud SFX" : "Freesound" : "Local"}</span>
+          {#if sound && isCloudSound(sound) && sound.license}<span>{freesoundLicenseLabel(sound.license)}</span>{/if}
+          {#if sound}<div class="tag-row">{#each sound.tags.slice(0, 5) as tag (tag)}<span class="tag-chip">{tag}</span>{/each}</div>{/if}
+        </div>
+      </ToolbarPopover>
+      <IconButton icon="close" label="Close preview and return to browsing" onclick={onClose} />
     </div>
   </div>
   <div class="hero-waveform">
@@ -276,28 +281,4 @@
       />
     {/key}
   </div>
-  {#if effectsOpen}
-    <EffectsRack
-      {sound} {processing} {processingBusy} {processingError}
-      segmentDuration={selectionDuration}
-      {onProcessing}
-      onReset={onResetProcessing}
-      onClose={onCloseEffects}
-    />
-  {:else}
-    <div class="preview-aside">
-      <div class="preview-detail-grid">
-        <div><span>Format</span><strong>{sound ? sound.extension.toUpperCase() : "—"}</strong></div>
-        <div><span>Size</span><strong>{sound ? formatSize(sound.size) : "—"}</strong></div>
-        <div><span>Length</span><strong>{sound && sound.duration ? formatDuration(sound.duration) : "On load"}</strong></div>
-        <div><span>Source</span><strong class="preview-source">{#if sound}<Icon name={sound.source === "freesound" ? "cloud" : "drive"} size={12} /> {sound.source === "freesound" ? "Freesound" : "Local"}{:else}—{/if}</strong></div>
-      </div>
-      {#if sound}
-        <div class="tag-row">
-          {#if sound.source === "freesound" && sound.license}<span class="tag-chip tag-chip--license">{freesoundLicenseLabel(sound.license)}</span>{/if}
-          {#each sound.tags.slice(0, 5) as tag (tag)}<span class="tag-chip">{tag}</span>{/each}
-        </div>
-      {/if}
-    </div>
-  {/if}
 </section>

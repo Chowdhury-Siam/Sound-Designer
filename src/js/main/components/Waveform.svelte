@@ -19,23 +19,6 @@
 
   const MINI_POINTS = 180;
 
-  const fallbackPeaks = (source: Float32Array) => {
-    const peaks = new Float32Array(MINI_POINTS * 2);
-    let noise = 2166136261;
-    for (let index = 0; index < MINI_POINTS; index += 1) {
-      const position = (index / Math.max(1, MINI_POINTS - 1)) * Math.max(0, source.length - 1);
-      const left = Math.floor(position);
-      const right = Math.min(source.length - 1, left + 1);
-      const mix = position - left;
-      noise = Math.imul(noise ^ (noise >>> 15), 2246822519) >>> 0;
-      const texture = 0.8 + ((noise >>> 8) / 0x00ffffff) * 0.2;
-      const amplitude = Math.max(0.015, Math.min(1, (source[left] * (1 - mix) + source[right] * mix) * texture));
-      peaks[index * 2] = -amplitude * 0.9;
-      peaks[index * 2 + 1] = amplitude;
-    }
-    return peaks;
-  };
-
   const realPeaks = (source: Float32Array) => {
     const peaks = new Float32Array(MINI_POINTS * 2);
     for (let index = 0; index < MINI_POINTS; index += 1) {
@@ -51,7 +34,7 @@
   };
 
   const compactPath = (sourceChannels: Float32Array[], fallback: Float32Array, waveformZoom: number, waveformReversed: boolean, waveformReal: boolean) => {
-    const peakChannels = sourceChannels.length ? sourceChannels : [waveformReal ? realPeaks(fallback) : fallbackPeaks(fallback)];
+    const peakChannels = sourceChannels.length ? sourceChannels : [realPeaks(fallback)];
     const totalBins = Math.max(1, Math.floor(peakChannels[0].length / 2));
     const visibleBins = Math.max(2, Math.floor(totalBins / waveformZoom));
     const renderBins = Math.min(MINI_POINTS, visibleBins);
@@ -90,13 +73,13 @@
     return `M${top.join(" L")} L${bottom.join(" L")} Z`;
   };
 
-  let path = $derived(compactPath(channels, values, zoom, reversed, real));
+  let path = $derived(channels.length || real ? compactPath(channels, values, zoom, reversed, real) : "");
   let playedPercent = $derived(Math.max(0, Math.min(100, progress * 100)));
 </script>
 
-<div class={`waveform ${compact ? "waveform--compact" : ""}`} aria-label="Audio waveform">
+<div class={`waveform ${compact ? "waveform--compact" : ""}`} aria-label={path ? "Audio waveform" : "Waveform not yet analyzed"}>
   <div class="waveform-layer waveform-layer--base">
-    <svg aria-hidden="true" preserveAspectRatio="none" viewBox="0 0 1000 100"><path d={path}></path></svg>
+    <svg aria-hidden="true" preserveAspectRatio="none" viewBox="0 0 1000 100">{#if path}<path d={path}></path>{:else}<line x1="0" y1="50" x2="1000" y2="50" stroke="currentColor" stroke-width="1" stroke-dasharray="8 8" />{/if}</svg>
   </div>
   {#if playedPercent > 0}
     <div class="waveform-played" style:clip-path={`inset(0 ${100 - playedPercent}% 0 0)`}>

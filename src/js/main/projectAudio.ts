@@ -1,3 +1,4 @@
+import { isLibraryMediaUrl, resolveCloudDownload, isCloudSound } from "./cloudLibrary";
 import { crypto, fs, https, path } from "../lib/cep/node";
 import type {
   AudioConversionPolicy,
@@ -34,7 +35,7 @@ export const requiresProjectAudioPreparation = (
   processing?: AudioProcessingSettings,
 ) => Boolean(sound.path && sound.preparedProfile === `${conversionPolicy}:${normalization}:${audioProcessingKey(processing)}`)
   ? false
-  : sound.source === "freesound"
+  : isCloudSound(sound)
   || normalization !== "preserve"
   || hasAudioProcessing(processing)
   || conversionPolicy === "always"
@@ -88,6 +89,7 @@ const extensionFromUrl = (url: string) => {
 };
 
 const trustedDownloadUrl = (value: string) => {
+  if (isLibraryMediaUrl(value)) return true;
   try {
     const parsed = new URL(value);
     return parsed.protocol === "https:"
@@ -297,7 +299,7 @@ const segmentDisplayTime = (seconds: number) => {
 export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudioOptions): Promise<PreparedAudio> => {
   if (!window.cep) throw new Error("Audio preparation is available inside the installed Adobe panel.");
   if (options.signal?.aborted) throw new DOMException("Audio preparation was cancelled.", "AbortError");
-  let workingPath = sound.source === "freesound" ? "" : sound.originalPath || sound.path;
+  let workingPath = isCloudSound(sound) ? "" : sound.originalPath || sound.path;
   let workingExtension = (sound.originalExtension || sound.extension).toLowerCase();
   let downloaded = false;
 
@@ -305,7 +307,7 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
     || hasAudioProcessing(options.processing)
     || options.conversionPolicy === "always"
     || (options.conversionPolicy === "unsupported" && !DIRECT_ADOBE_AUDIO[workingExtension]);
-  if (sound.source !== "freesound" && !localNeedsConversion) {
+  if (!isCloudSound(sound) && !localNeedsConversion) {
     if (!workingPath || !fs.existsSync(workingPath)) throw new Error("The source audio file is unavailable.");
     const stat = fs.statSync(workingPath);
     return {
@@ -327,15 +329,16 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
 
   const directories = projectDirectories(options.project);
 
-  if (sound.source === "freesound") {
-    if (!sound.previewUrl || !sound.sourceId) throw new Error("This Freesound result has no downloadable preview.");
-    workingExtension = extensionFromUrl(sound.previewUrl);
-    const baseName = `${safeName(sound.sourceId, "sound")}-${safeName(sound.name, "freesound")}`;
+  if (isCloudSound(sound)) {
+    if ((!sound.previewUrl && sound.source !== "scorpion") || !sound.sourceId) throw new Error("This Freesound result has no downloadable preview.");
+    const downloadUrl = await resolveCloudDownload(sound, options.signal);
+    workingExtension = sound.source === "scorpion" ? "mp3" : extensionFromUrl(downloadUrl);
+    const baseName = `${sound.source === "scorpion" ? "SoundDesigner-" : ""}${safeName(sound.sourceId, "sound")}-${safeName(sound.name, "sound")}`;
     workingPath = path.join(directories.originals, `${baseName}.${workingExtension}`);
     if (!fs.existsSync(workingPath)) {
       options.onProgress?.("downloading", `Downloading ${sound.name}…`);
       await downloadFile(
-        sound.previewUrl,
+        downloadUrl,
         workingPath,
         options.signal,
         (progress) => options.onProgress?.("downloading", `Downloading ${sound.name}…`, progress),
@@ -345,7 +348,7 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
     const sourceMetadataPath = path.join(directories.metadata, `${baseName}.json`);
     writeJsonAtomically(sourceMetadataPath, {
       version: 1,
-      provider: "Freesound",
+      provider: sound.source === "scorpion" ? "SoundDesigner" : "Freesound",
       id: sound.sourceId,
       name: sound.name,
       creator: sound.creator || "",
@@ -365,7 +368,7 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
     || (options.conversionPolicy === "unsupported" && needsCompatibilityConversion);
   let preparedPath = workingPath;
   let preparedDuration = hasAudioProcessing(options.processing)
-    ? sound.duration / Math.max(0.5, options.processing?.speed || 1)
+    ? sound.duration / Math.max(0.5, options.processing?.speed || 1) + (options.processing?.echoMix ? 0.9 : options.processing?.reverbMix ? 0.32 : 0)
     : sound.duration;
   let gainDb = 0;
   let converted = false;
@@ -419,10 +422,10 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
       duration: converted && hasAudioProcessing(options.processing)
         ? preparedDuration || sound.duration / Math.max(0.5, options.processing?.speed || 1)
         : sound.duration,
-      downloadState: sound.source === "freesound" ? "ready" : sound.downloadState,
+      downloadState: isCloudSound(sound) ? "ready" : sound.downloadState,
       preparedProjectPath: options.project.projectPath,
       preparedProfile: `${options.conversionPolicy}:${options.normalization}:${audioProcessingKey(options.processing)}`,
-      originalPath: sound.source === "freesound" ? sound.originalPath : sound.originalPath || workingPath,
+      originalPath: isCloudSound(sound) ? sound.originalPath : sound.originalPath || workingPath,
       originalExtension: sound.originalExtension || sound.extension,
     },
     projectRoot: directories.root,
@@ -487,7 +490,8 @@ export const prepareAudioSegmentForHost = async (
     }
   }
 
-  const segmentDuration = (endFrame - startFrame) / decoded.sampleRate / Math.max(0.5, options.processing?.speed || 1);
+  const segmentDuration = (endFrame - startFrame) / decoded.sampleRate / Math.max(0.5, options.processing?.bypass ? 1 : options.processing?.speed || 1)
+    + (options.processing?.bypass ? 0 : options.processing?.echoMix ? 0.9 : options.processing?.reverbMix ? 0.32 : 0);
   const segmentName = `${sound.name} [${segmentDisplayTime(startSeconds)}–${segmentDisplayTime(endSeconds)}]`;
   const metadataPath = path.join(directories.metadata, `${baseName}.json`);
   writeJsonAtomically(metadataPath, {
@@ -520,7 +524,7 @@ export const prepareAudioSegmentForHost = async (
       modifiedAt: stat.mtimeMs || stat.mtime.getTime(),
       duration: segmentDuration,
       waveform: sound.waveform,
-      downloadState: sound.source === "freesound" ? "ready" : sound.downloadState,
+      downloadState: isCloudSound(sound) ? "ready" : sound.downloadState,
       preparedProjectPath: options.project.projectPath,
       preparedProfile: `${options.conversionPolicy}:${options.normalization}:${audioProcessingKey(options.processing)}`,
       originalPath: preparedSource.sound.originalPath || sourcePath,

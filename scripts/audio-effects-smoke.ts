@@ -51,6 +51,21 @@ const impulseBuffer = {
 const reversedGain = await renderAudioProcessing(impulseBuffer, { reverse: true, gainDb: 6 });
 assertNear(reversedGain.channels[0][3], 0.25 * Math.pow(10, 6 / 20), 0.0001, "reverse and gain");
 
+const echoRender = await renderAudioProcessing(impulseBuffer, { echoMix: 0.4 });
+assertNear(echoRender.duration, impulseBuffer.duration + 0.9, 0.001, "echo tail duration");
+assertNear(echoRender.channels[0][Math.round(sampleRate * 0.3)], 0.1, 0.0001, "first echo tap");
+const roomRender = await renderAudioProcessing(impulseBuffer, { reverbMix: 0.4 });
+assertNear(roomRender.duration, impulseBuffer.duration + 0.32, 0.001, "room tail duration");
+if (!roomRender.channels[0].slice(1).some(value => value !== 0)) throw new Error("Room reflections missing");
+const bypassed = await renderAudioProcessing(impulseBuffer, { bypass: true, echoMix: 0.6, reverse: true, normalize: true, speed: 2 });
+assertNear(bypassed.duration, impulseBuffer.duration, 0.00001, "bypass duration");
+assertNear(bypassed.channels[0][0], 0.25, 0.00001, "bypass original samples");
+const normalizedFx = await renderAudioProcessing(impulseBuffer, { normalize: true });
+assertNear(normalizedFx.channels[0][0], Math.pow(10, -1 / 20), 0.0001, "Quick FX normalize target");
+const cancelled = new AbortController(); cancelled.abort();
+try { await renderAudioProcessing(impulseBuffer, {echoMix: 0.5}, "preserve", cancelled.signal); throw new Error("Cancellation ignored"); }
+catch (error) { if (!(error instanceof DOMException) || error.name !== "AbortError") throw error; }
+
 const ranged = new Float32Array([1, 0.25, -0.25, 1]);
 const rangedBuffer = {
   length: ranged.length,

@@ -1,9 +1,12 @@
+import { isCloudSound } from "./cloudLibrary";
 import { fs, path } from "../lib/cep/node";
 import { csi } from "../lib/utils/bolt";
 import { normalizeDialogPath } from "./library";
 import type { LabelColor, LibraryFolder, LibraryTreeNode, SoundFile } from "./types";
 
 type SoundMetadata = {
+  favoriteCollection?: string;
+  cloudSound?: Omit<SoundFile, "waveform">;
   labelColor?: LabelColor;
   favorite?: boolean;
   waveformFingerprint?: string;
@@ -16,11 +19,25 @@ type FolderMetadata = {
 };
 
 type MetadataDocument = {
+  collections?: FavoriteCollection[];
   version: 1;
   sounds: Record<string, SoundMetadata>;
   folders: Record<string, FolderMetadata>;
   updatedAt: number;
 };
+
+export type FavoriteCollection = { id: string; name: string; parentId: string };
+export const loadFavoriteCollections = (): FavoriteCollection[] => {
+  const list = loadDocument().collections;
+  return Array.isArray(list) ? list.filter(item => item && typeof item.id === "string" && typeof item.name === "string" && typeof item.parentId === "string") : [];
+};
+export const saveFavoriteCollections = (collections: FavoriteCollection[]) => {
+  loadDocument().collections = collections;
+  scheduleSave();
+};
+export const loadCloudFavorites = (): SoundFile[] => Object.values(loadDocument().sounds)
+  .filter(item => item.favorite && item.cloudSound)
+  .map(item => ({ ...item.cloudSound!, favorite: true, favoriteCollection: item.favoriteCollection || "", waveform: new Float32Array(0), waveformReal: false }));
 
 const STORAGE_DIRECTORY = "SoundDesigner";
 const STORAGE_FILE = "library-metadata.json";
@@ -35,8 +52,8 @@ const nativeKey = (nativePath: string) => {
 };
 
 const soundKey = (sound: Pick<SoundFile, "path" | "source" | "sourceId" | "id">) =>
-  sound.source === "freesound"
-    ? `source:freesound:${sound.sourceId || sound.id}`
+  isCloudSound(sound)
+    ? `source:${sound.source}:${sound.sourceId || sound.id}`
     : sound.path ? `file:${nativeKey(sound.path)}` : `source:${sound.source || "local"}:${sound.sourceId || sound.id}`;
 
 const waveformFingerprint = (sound: Pick<SoundFile, "path" | "size" | "modifiedAt">) =>
@@ -59,6 +76,7 @@ const sanitizeDocument = (value: unknown): MetadataDocument => {
     version: 1,
     sounds: candidate.sounds && typeof candidate.sounds === "object" ? candidate.sounds : {},
     folders: candidate.folders && typeof candidate.folders === "object" ? candidate.folders : {},
+    collections: candidate.collections,
     updatedAt: Number(candidate.updatedAt) || 0,
   };
 };
@@ -134,6 +152,7 @@ export const hydrateLibraryMetadata = (folders: LibraryFolder[], sounds: SoundFi
     return {
       ...sound,
       favorite: stored?.favorite === true,
+      favoriteCollection: stored?.favoriteCollection || "",
       labelColor: stored?.labelColor,
       waveform: cachedWaveform || sound.waveform,
       waveformReal: Boolean(cachedWaveform),
@@ -143,7 +162,7 @@ export const hydrateLibraryMetadata = (folders: LibraryFolder[], sounds: SoundFi
 
 export const saveSoundMetadata = (
   sound: SoundFile,
-  patch: { labelColor?: LabelColor; favorite?: boolean; waveform?: Float32Array; clearLabel?: boolean },
+  patch: { labelColor?: LabelColor; favorite?: boolean; favoriteCollection?: string; waveform?: Float32Array; clearLabel?: boolean },
 ) => {
   const cache = loadDocument();
   const key = soundKey(sound);
@@ -151,6 +170,11 @@ export const saveSoundMetadata = (
   if (patch.clearLabel) delete current.labelColor;
   else if (patch.labelColor) current.labelColor = patch.labelColor;
   if (typeof patch.favorite === "boolean") current.favorite = patch.favorite;
+  if (typeof patch.favoriteCollection === "string") current.favoriteCollection = patch.favoriteCollection;
+  if (isCloudSound(sound) && current.favorite) {
+    const { waveform, ...snapshot } = sound;
+    current.cloudSound = snapshot;
+  }
   if (patch.waveform && sound.path) {
     current.waveformFingerprint = waveformFingerprint(sound);
     current.waveform = Array.from(patch.waveform, (value) => Math.round(Math.max(0, Math.min(1, value)) * 255) / 255);

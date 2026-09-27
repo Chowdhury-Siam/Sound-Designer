@@ -1,5 +1,6 @@
 import { csi, evalTS } from "../lib/utils/bolt";
 import type { HostApp, HostProjectContext, HostResult, InsertAudioRequest } from "./types";
+import type { SfxAnalysis, SfxDensity, SfxPlacement, SfxPlacementResult, SfxScope } from "./sfxAssistant";
 
 export type AfterEffectsAudioDragState = {
   ok: boolean;
@@ -83,5 +84,25 @@ export const getAfterEffectsAudioDragState = async (request: InsertAudioRequest)
         ? String((error as { message: unknown }).message)
         : String(error || "The active composition could not be inspected."),
     };
+  }
+};
+
+export const analyzeAfterEffectsSfx = async (scope: SfxScope, density: SfxDensity): Promise<SfxAnalysis> => {
+  if (detectHost() !== "aftereffects") {
+    return { ok: false, message: "SFX Assistant currently requires After Effects.", compositionId: 0, compositionName: "", frameDuration: 0, analyzedLayers: 0, moments: [] };
+  }
+  try {
+    return await evalTS("analyzeSfxMoments", { scope, density }) as SfxAnalysis;
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error), compositionId: 0, compositionName: "", frameDuration: 0, analyzedLayers: 0, moments: [] };
+  }
+};
+
+export const placeAfterEffectsSfx = async (compositionId: number, placements: SfxPlacement[]): Promise<SfxPlacementResult> => {
+  if (detectHost() !== "aftereffects") return { ok: false, message: "SFX Assistant currently requires After Effects.", placed: 0 };
+  try {
+    return await evalTS("placeSfxMoments", { compositionId, placements }) as SfxPlacementResult;
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error), placed: 0 };
   }
 };

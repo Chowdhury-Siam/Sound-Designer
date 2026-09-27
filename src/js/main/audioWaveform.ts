@@ -1,3 +1,4 @@
+import { isLibraryMediaUrl } from "./cloudLibrary";
 import { fs, https } from "../lib/cep/node";
 import { encodeRenderedWave, renderAudioProcessing } from "./audioEffects";
 import type { AudioProcessingSettings, AudioSegmentSelection, SoundFile } from "./types";
@@ -36,6 +37,7 @@ const readAudioFile = (filePath: string) => new Promise<ArrayBuffer>((resolve, r
 });
 
 const trustedRemoteAudioUrl = (value: string) => {
+  if (isLibraryMediaUrl(value)) return true;
   try {
     const parsed = new URL(value);
     return parsed.protocol === "https:"

@@ -52,26 +52,28 @@
     class={`library-tree-row ${node.labelColor ? `has-color-label label-${node.labelColor}` : ""}`}
     class:is-pinned={node.pinned}
     class:is-selected={selectedId === node.id}
+    class:is-root={depth === 0}
+    class:is-branch-open={hasChildren && expanded}
     oncontextmenu={openContextMenu}
     role="group"
     aria-label={node.name}
-    style:padding-inline-start={`${4 + depth * 13}px`}
+    data-library-node={node.id}
   >
     <button
       aria-label={`${expanded ? "Collapse" : "Expand"} ${node.name}`}
+      aria-expanded={hasChildren ? expanded : undefined}
       class:is-expanded={expanded}
       class="tree-expander"
       disabled={!hasChildren}
       onclick={() => onToggle(node.id)}
       type="button"
     ><Icon name="chevron" size={12} /></button>
-    <button class="library-tree-select" onclick={() => onSelect(node.id)} type="button">
+    <button class="library-tree-select tooltip" data-tooltip={`${node.path} · ${node.directFileCount} direct sounds · ${node.totalFileCount} including subfolders${meta ? ` · ${meta}` : ""}`} onclick={() => onSelect(node.id)} type="button">
       <span class="library-icon"><Icon name="folder" size={14} /></span>
       <span class="library-copy">
         <strong>{node.name}</strong>
-        <small>{meta || (node.children.length ? `${node.children.length} folders` : `${node.directFileCount} sounds`)}</small>
       </span>
-      <span class="count-badge">{node.totalFileCount}</span>
+      <span class="count-badge" aria-label={`${node.totalFileCount} sounds including subfolders`}>{node.totalFileCount}</span>
     </button>
   </div>
   <ItemContextMenu

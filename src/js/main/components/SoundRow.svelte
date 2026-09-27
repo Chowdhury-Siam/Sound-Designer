@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { isCloudSound } from "../cloudLibrary";
+
   import { onDestroy } from "svelte";
   import type { AudioPreparationStatus, SoundFile } from "../types";
   import { formatDuration, formatSize } from "../ui-utils";
@@ -7,7 +9,9 @@
   import ItemContextMenu from "./ItemContextMenu.svelte";
   import Waveform from "./Waveform.svelte";
 
-  let { sound, channels = [], selected, playing, progress, preparation, dragHint, onSelect, onPlay, onInsert, onFavorite, onLabelColor, onDragPrepare, onDragStart, onDragEnd }: {
+  let { sound, channels = [], selected, playing, progress, preparation, dragHint, onSelect, onPlay, onInsert, onFavorite, onLabelColor, onDragPrepare, onDragStart, onDragEnd, onHover = () => {}, onLeave = () => {} }: {
+    onHover?: () => void;
+    onLeave?: () => void;
     sound: SoundFile;
     channels?: Float32Array[];
     selected: boolean;
@@ -25,8 +29,7 @@
     onDragEnd: (event: DragEvent) => void;
   } = $props();
 
-  let score = $derived(76 + (sound.name.length * 7) % 23);
-  let isCloud = $derived(sound.source === "freesound");
+  let isCloud = $derived(isCloudSound(sound));
   let isPreparing = $derived(Boolean(preparation));
   let preparationProgress = $derived(preparation?.progress === undefined
     ? 0.26
@@ -37,7 +40,7 @@
       : `${preparation.message} ${Math.round(preparation.progress * 100)}%`
     : "");
   let sourceLabel = $derived(isCloud
-    ? sound.path ? "Freesound · downloaded for this project" : "Freesound cloud library"
+    ? sound.path ? "Cloud sound · downloaded for this project" : sound.source === "scorpion" ? "Cloud SFX library" : "Freesound cloud library"
     : "Local sound library");
   let dragPrepareTimer = 0;
   let contextOpen = $state(false);
@@ -71,7 +74,7 @@
     dragPrepareTimer = 0;
   };
 
-  onDestroy(cancelScheduledDragPreparation);
+  onDestroy(() => { cancelScheduledDragPreparation(); onLeave(); });
 </script>
 
 <div
@@ -79,6 +82,8 @@
   class:is-cloud={isCloud}
   class:is-preparing={isPreparing}
   draggable={Boolean(sound.path) || isCloud}
+  onpointerenter={(e) => { if (e.pointerType === "mouse") onHover(); }}
+  onpointerleave={onLeave}
   onclick={onSelect}
   ondblclick={onInsert}
   onpointerdown={scheduleDragPreparation}
@@ -126,14 +131,13 @@
           <Icon name={isCloud ? sound.path ? "cloudCheck" : "cloud" : "drive"} size={13} />
         {/if}
       </span>
-      <strong>{sound.name}</strong>
+      <strong class="tooltip" data-tooltip={sound.name}>{sound.name}</strong>
       {#if isCloud && sound.creator}<small class="sound-creator">by {sound.creator}</small>{/if}
     </div>
     <Waveform compact values={sound.waveform} real={sound.waveformReal === true} {channels} progress={playing ? progress : 0} />
   </div>
   <div class="sound-meta"><span>{sound.duration ? formatDuration(sound.duration) : "—:—"}</span><small>{sound.extension.toUpperCase()} · {formatSize(sound.size)}</small></div>
-  <span class="match-score tooltip" data-tooltip="Search relevance">{score}%</span>
-  <IconButton icon="heart" label={sound.favorite ? "Remove from favorites" : "Add to favorites"} active={sound.favorite} onclick={(event) => { event.stopPropagation(); onFavorite(); }} class="row-favorite" />
+  <IconButton icon="heart" label={sound.favorite ? "Organize favorite" : "Add to favorites"} active={sound.favorite} onclick={(event) => { event.stopPropagation(); onFavorite(); }} class="row-favorite" />
 </div>
 <ItemContextMenu
   open={contextOpen}

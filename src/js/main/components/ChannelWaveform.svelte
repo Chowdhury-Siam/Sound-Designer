@@ -173,8 +173,8 @@
         >Stereo</button>
         <button
           aria-label={reverseSelection ? "Reverse selected segment" : "Reverse sound"}
-          aria-pressed={reversed}
-          class:is-active={reversed}
+          aria-pressed={reversed || Boolean(reverseRange)}
+          class:is-active={reversed || Boolean(reverseRange)}
           class="channel-reverse tooltip"
           data-tooltip={reverseSelection ? "Reverse selected segment" : "Reverse sound"}
           onclick={(event) => { event.stopPropagation(); onReverse?.(); }}

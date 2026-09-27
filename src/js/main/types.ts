@@ -4,7 +4,7 @@ export type AccentName = "graphite";
 
 export type LabelColor = "red" | "orange" | "yellow" | "green" | "blue" | "purple" | "gray";
 
-export type SoundSource = "local" | "freesound";
+export type SoundSource = "local" | "freesound" | "scorpion";
 
 export type AudioConversionPolicy = "unsupported" | "always" | "never";
 
@@ -24,6 +24,10 @@ export type AudioSegmentSelection = {
 };
 
 export type AudioProcessingSettings = {
+  bypass?: boolean;
+  normalize?: boolean;
+  echoMix?: number;
+  reverbMix?: number;
   reverse: boolean;
   gainDb: number;
   pitchSemitones: number;
@@ -71,6 +75,7 @@ export type LibraryFolder = {
 };
 
 export type SoundFile = {
+  favoriteCollection?: string;
   id: string;
   folderId: string;
   directoryId: string;

@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+import { isCloudSound } from "./cloudLibrary";
+
+  import { onMount, tick, untrack } from "svelte";
   import {
     chooseLibraryFolder,
     fileUrl,
@@ -23,12 +25,13 @@
   import { csi, openLinkInBrowser } from "../lib/utils/bolt";
   import { compactWaveformFromChannels, decodeAudioWaveformChannels, decodeRemoteAudioWaveformChannels, renderProcessedPreview } from "./audioWaveform";
   import { audioProcessingKey, DEFAULT_AUDIO_PROCESSING, hasAudioProcessing, normalizeAudioProcessing } from "./audioEffects";
-  import { searchFreesound } from "./freesound";
+  import { searchSoundSources, loadCloudEnabled, saveCloudEnabled, resolveCloudPreview } from "./cloudLibrary";
   import { prepareAudioForHost, prepareAudioSegmentForHost, requiresProjectAudioPreparation } from "./projectAudio";
   import { createLibraryTabs, createSearchTab, searchTabLabel, updateSearchTabFolder, updateSearchTabQuery } from "./searchTabs";
   import { checkForUpdates, dismissUpdate, INSTALLED_VERSION, isUpdateDismissed, type UpdateState } from "./updater";
   import { labelColorOrder } from "./labels";
-  import { flushLibraryMetadata, hydrateLibraryMetadata, saveFolderMetadata, saveSoundMetadata } from "./libraryMetadata";
+  import { flushLibraryMetadata, hydrateLibraryMetadata, saveFolderMetadata, saveSoundMetadata, loadFavoriteCollections, saveFavoriteCollections, loadCloudFavorites, type FavoriteCollection } from "./libraryMetadata";
+  import FavoriteSheet from "./components/FavoriteSheet.svelte";
   import type {
     AudioConversionPolicy,
     AudioNormalization,
@@ -48,11 +51,14 @@
   import { collectTreeIds, countTreeNodes, hostLabel } from "./ui-utils";
   import Icon from "./components/Icon.svelte";
   import IconButton from "./components/IconButton.svelte";
+  import ToolbarPopover from "./components/ToolbarPopover.svelte";
+  import EffectsRack from "./components/EffectsRack.svelte";
   import ColorLabelPicker from "./components/ColorLabelPicker.svelte";
   import LibrarySidebar from "./components/LibrarySidebar.svelte";
   import PreviewPane from "./components/PreviewPane.svelte";
   import SearchTabs from "./components/SearchTabs.svelte";
   import SettingsSheet from "./components/SettingsSheet.svelte";
+  import SfxAssistantSheet from "./components/SfxAssistantSheet.svelte";
   import SoundRow from "./components/SoundRow.svelte";
   import Transport from "./components/Transport.svelte";
   import "./main.scss";
@@ -67,6 +73,13 @@
   const VIRTUAL_OVERSCAN = 8;
   const PREFERENCES_STORAGE_KEY = "sounddesigner.preferences.v1";
   const LIBRARY_WIDTH_STORAGE_KEY = "sounddesigner.library-width.v1";
+  const SIDEBAR_PIN_STORAGE_KEY = "sounddesigner.sidebar-pin.v1";
+  const browsePreference = (key: string, fallback: string) => {
+    try { return localStorage.getItem(`sounddesigner.browse.${key}`) || fallback; } catch (_) { return fallback; }
+  };
+  const readSidebarPin = () => {
+    try { return localStorage.getItem(SIDEBAR_PIN_STORAGE_KEY) === "true"; } catch (_) { return false; }
+  };
   const LIBRARY_MIN_WIDTH = 180;
   const LIBRARY_MAX_WIDTH = 560;
   const RESULTS_MIN_WIDTH = 320;
@@ -124,7 +137,7 @@
     try {
       const raw = localStorage.getItem(LIBRARY_WIDTH_STORAGE_KEY);
       const stored = raw === null ? Number.NaN : Number(raw);
-      if (Number.isFinite(stored)) return Math.max(LIBRARY_MIN_WIDTH, Math.min(LIBRARY_MAX_WIDTH, stored));
+      if (Number.isFinite(stored)) return Math.max(120, Math.min(LIBRARY_MAX_WIDTH, stored));
     } catch (_error) {
       // Use the balanced default when host policy blocks local storage.
     }
@@ -132,8 +145,9 @@
   };
 
   const clampLibraryWidth = (value: number) => {
-    const available = Math.max(LIBRARY_MIN_WIDTH, window.innerWidth - RESULTS_MIN_WIDTH);
-    return Math.round(Math.max(LIBRARY_MIN_WIDTH, Math.min(LIBRARY_MAX_WIDTH, available, value)));
+    const minimum = sidebarPinned ? 120 : LIBRARY_MIN_WIDTH;
+    const available = Math.max(minimum, window.innerWidth - (sidebarPinned ? 160 : RESULTS_MIN_WIDTH));
+    return Math.round(Math.max(minimum, Math.min(LIBRARY_MAX_WIDTH, available, value)));
   };
 
   const saveLibraryWidth = (value: number) => {
@@ -250,6 +264,8 @@
   let sounds = $state<SoundFile[]>(browserDemoSound ? [browserDemoSound] : []);
   let freesoundSounds = $state<SoundFile[]>([]);
   let localSourceEnabled = $state(preferences.localSourceEnabled);
+  let cloudLibraryEnabled = $state(loadCloudEnabled());
+  $effect(() => saveCloudEnabled(cloudLibraryEnabled));
   let freesoundLibraryEnabled = $state(preferences.freesoundLibraryEnabled);
   let freesoundSourceEnabled = $state(preferences.freesoundLibraryEnabled && preferences.freesoundSourceEnabled);
   let freesoundStatus = $state<"idle" | "loading" | "ready" | "error">("idle");
@@ -285,8 +301,24 @@
   let indexProgress = $state<ScanProgress>({ files: 0, folders: 0, currentPath: "" });
   let insertBusy = $state(false);
   let sidebarOpen = $state(false);
+  let sidebarPinned = $state(readSidebarPin());
+  let includeSubfolders = $state(true);
   let compactPreviewOpen = $state(false);
+  let gridView = $state(browsePreference("view", "list") === "grid");
+  let tileSize = $state(Math.max(120, Math.min(240, Number(browsePreference("tile-size", "160")) || 160)));
+  let hoverPreview = $state(browsePreference("hover", "false") === "true");
+  let collections = $state<FavoriteCollection[]>(loadFavoriteCollections());
+  let favoriteCollection = $state("all");
+  let favoriteEditing = $state<SoundFile | null>(null);
+  let savedCloudFavorites = $state<SoundFile[]>(loadCloudFavorites());
+  let resultsViewportWidth = $state(500);
+  let toolbarWidth = $state(500);
+  $effect(() => {
+    const values = { view: gridView ? "grid" : "list", "tile-size": String(tileSize), hover: String(hoverPreview) };
+    try { for (const [key, value] of Object.entries(values)) localStorage.setItem(`sounddesigner.browse.${key}`, value); } catch (_) {}
+  });
   let settingsOpen = $state(false);
+  let sfxAssistantOpen = $state(false);
   let settingsFolderId = $state<string | null>(null);
   let autoPreview = $state(preferences.autoPreview);
   let conversionPolicy = $state<AudioConversionPolicy>(preferences.conversionPolicy);
@@ -310,6 +342,42 @@
   let effectsOpen = $state(false);
 
   let audio: HTMLAudioElement | null = null;
+  let hoverAudio: HTMLAudioElement | null = null;
+  let hoverController: AbortController | null = null;
+  let hoverTimer = 0;
+  let hoverGeneration = 0;
+  let hoverSoundId = "";
+  const stopHover = () => {
+    hoverGeneration += 1;
+    hoverController?.abort();
+    hoverController = null;
+    window.clearTimeout(hoverTimer);
+    hoverTimer = 0;
+    hoverSoundId = "";
+    if (hoverAudio) { hoverAudio.pause(); hoverAudio.removeAttribute("src"); hoverAudio.load(); hoverAudio = null; }
+  };
+  const auditionHover = (sound: SoundFile) => {
+    stopHover();
+    if (!hoverPreview || favoriteEditing || settingsOpen) return;
+    const generation = hoverGeneration;
+    hoverSoundId = sound.id;
+    hoverTimer = window.setTimeout(async () => {
+      try {
+        const controller = new AbortController();
+        hoverController = controller;
+        const url = sound.path ? fileUrl(sound.path) : sound.previewUrl || (sound.source === "scorpion" ? await resolveCloudPreview(sound, controller.signal) : "");
+        if (!url || generation !== hoverGeneration || !hoverPreview) return;
+        if (audio) audio.pause();
+        const next = new Audio(url);
+        next.volume = audio?.volume ?? 0.8;
+        hoverAudio = next;
+        await next.play();
+        if (generation !== hoverGeneration) { next.pause(); next.removeAttribute("src"); next.load(); }
+      } catch (_) { /* Hover audition is optional; explicit Play reports failures. */ }
+    }, 350);
+  };
+  $effect(() => { if (!hoverPreview) untrack(stopHover); });
+  onMount(() => () => stopHover());
   let audioPreviewScope: AudioSegmentSelection | null = null;
   let audioUsesProcessedPreview = false;
   let audioSoundId = "";
@@ -389,7 +457,9 @@
     return {
       ...sound,
       favorite: cached.favorite,
+      favoriteCollection: cached.favoriteCollection,
       labelColor: cached.labelColor,
+      previewUrl: cached.previewUrl || sound.previewUrl,
       path: cached.path,
       extension: cached.path ? cached.extension : sound.extension,
       size: cached.path ? cached.size : sound.size,
@@ -421,26 +491,38 @@
     return nodes;
   });
   const folderNameForId = (folderId: string) => folderNodesById.get(folderId)?.name || "";
+  let folderBreadcrumb = $derived.by(() => {
+    const node = folderNodesById.get(selectedFolder);
+    if (!node) return "All sounds";
+    const root = folders.find((folder) => folder.tree.id === node.rootId || folder.tree.id === node.id);
+    if (!root || node.id === root.tree.id) return node.name;
+    const relative = node.path.replace(/\\/g, "/").slice(root.path.replace(/\\/g, "/").length).replace(/^\/+/, "");
+    return `${root.name} / ${relative.split("/").join(" / ")}`;
+  });
   const setActiveTabFolder = (folderId: string) => {
     tabs = updateSearchTabFolder(tabs, activeTabId, folderId, folderNameForId);
   };
-  let cloudSourceActive = $derived(freesoundLibraryEnabled && freesoundSourceEnabled);
-  let selected = $derived(sounds.find((sound) => sound.id === selectedId) || freesoundSounds.find((sound) => sound.id === selectedId) || null);
+  let cloudSourceActive = $derived((selectedFolder === "all" || filter === "favorites") && (cloudLibraryEnabled || (freesoundLibraryEnabled && freesoundSourceEnabled)));
+  let selected = $derived(sounds.find((sound) => sound.id === selectedId) || freesoundSounds.find((sound) => sound.id === selectedId) || savedCloudFavorites.find(sound => sound.id === selectedId) || null);
   let settingsFolder = $derived(folders.find((folder) => folder.id === settingsFolderId) || null);
-  let favoriteCount = $derived([...sounds, ...freesoundSounds].filter((sound) => sound.favorite).length);
+  let favoriteCount = $derived(new Set([...sounds, ...freesoundSounds, ...savedCloudFavorites].filter((sound) => sound.favorite).map(sound => sound.id)).size);
   let selectedDirectoryIds = $derived.by(() => {
     const ids = new Set<string>();
     if (selectedFolder === "all") return ids;
     const node = folderNodesById.get(selectedFolder);
-    if (node) collectTreeIds(node, ids);
+    if (node) {
+      ids.add(node.id);
+      if (includeSubfolders) collectTreeIds(node, ids);
+    }
     return ids;
   });
   let localVisibleSounds = $derived.by(() => {
     if (!localSourceEnabled) return [];
     const queryTokens = (activeTab?.query || "").toLowerCase().trim().split(/\s+/).filter(Boolean);
     return sounds.filter((sound) => {
-      if (selectedFolder !== "all" && !selectedDirectoryIds.has(sound.directoryId)) return false;
+      if (filter !== "favorites" && selectedFolder !== "all" && !selectedDirectoryIds.has(sound.directoryId)) return false;
       if (filter === "favorites" && !sound.favorite) return false;
+      if (filter === "favorites" && favoriteCollection !== "all" && (sound.favoriteCollection || "") !== favoriteCollection) return false;
       if (filter === "ambience" && !sound.tags.includes("ambience") && sound.duration < 10) return false;
       if (filter === "one-shot" && sound.duration > 8) return false;
       if (labelFilter && sound.labelColor !== labelFilter) return false;
@@ -449,8 +531,11 @@
       return queryTokens.every((token) => haystack.includes(token));
     });
   });
-  let freesoundVisibleSounds = $derived(cloudSourceActive ? freesoundSounds.filter((sound) => {
+  let cloudBrowseSounds = $derived(filter === "favorites" ? [...new Map([...savedCloudFavorites, ...freesoundSounds.filter(sound => sound.favorite)].map(sound => [sound.id, sound])).values()] : freesoundSounds);
+  let freesoundVisibleSounds = $derived(cloudSourceActive && (selectedFolder === "all" || filter === "favorites") ? cloudBrowseSounds.filter((sound) => {
     if (filter === "favorites" && !sound.favorite) return false;
+    if (filter === "favorites" && favoriteCollection !== "all" && (sound.favoriteCollection || "") !== favoriteCollection) return false;
+    if (filter === "favorites" && !(activeTab?.query || "").toLowerCase().trim().split(/\s+/).filter(Boolean).every(token => soundSearchText(sound).includes(token))) return false;
     if (filter === "ambience" && !sound.tags.includes("ambience") && sound.duration < 10) return false;
     if (filter === "one-shot" && sound.duration > 8) return false;
     if (labelFilter && sound.labelColor !== labelFilter) return false;
@@ -464,26 +549,28 @@
       labelColorOrder(first.labelColor) - labelColorOrder(second.labelColor) || first.name.localeCompare(second.name));
     return combined;
   });
-  let sortLabel = $derived(sortMode === "name" ? "Name" : sortMode === "duration" ? "Duration" : sortMode === "label" ? "Label" : "Relevance");
+  let sortLabel = $derived(sortMode === "name" ? "Name" : sortMode === "duration" ? "Duration" : sortMode === "label" ? "Label" : "Default");
   let searchPlaceholder = $derived(localSourceEnabled && cloudSourceActive
-    ? "Search local and Freesound…"
-    : cloudSourceActive ? "Search Freesound…" : "Search local sounds…");
+    ? "Search local and cloud sounds…"
+    : cloudSourceActive ? "Search cloud sounds…" : "Search local sounds…");
   let virtualizedResults = $derived(visibleSounds.length > VIRTUALIZATION_THRESHOLD);
+  let gridColumns = $derived(gridView ? Math.max(1, Math.floor((resultsViewportWidth - 18 + 8) / (tileSize + 8))) : 1);
+  let virtualRowHeight = $derived(gridView ? 138 : resultRowHeight);
   let virtualStart = $derived.by(() => {
     if (!virtualizedResults) return 0;
-    const start = Math.max(0, Math.floor(resultsScrollTop / resultRowHeight) - VIRTUAL_OVERSCAN);
-    return Math.min(start, Math.max(0, visibleSounds.length - 1));
+    const start = Math.max(0, Math.floor(resultsScrollTop / virtualRowHeight) - VIRTUAL_OVERSCAN) * gridColumns;
+    return Math.min(start, Math.max(0, Math.floor((visibleSounds.length - 1) / gridColumns) * gridColumns));
   });
   let virtualEnd = $derived.by(() => {
     if (!virtualizedResults) return visibleSounds.length;
     return Math.min(
       visibleSounds.length,
-      Math.ceil((resultsScrollTop + resultsViewportHeight) / resultRowHeight) + VIRTUAL_OVERSCAN,
+      (Math.ceil((resultsScrollTop + resultsViewportHeight) / virtualRowHeight) + VIRTUAL_OVERSCAN) * gridColumns,
     );
   });
   let renderedSounds = $derived(visibleSounds.slice(virtualStart, virtualEnd));
-  let virtualTopSpace = $derived(virtualizedResults ? virtualStart * resultRowHeight : 0);
-  let virtualBottomSpace = $derived(virtualizedResults ? Math.max(0, (visibleSounds.length - virtualEnd) * resultRowHeight) : 0);
+  let virtualTopSpace = $derived(virtualizedResults ? Math.floor(virtualStart / gridColumns) * virtualRowHeight : 0);
+  let virtualBottomSpace = $derived(virtualizedResults ? Math.max(0, Math.ceil((visibleSounds.length - virtualEnd) / gridColumns) * virtualRowHeight) : 0);
 
   const notify = (type: ToastMessage["type"], message: string) => {
     const id = ++toastId;
@@ -537,7 +624,7 @@
   const enqueueWaveformAnalysis = (candidates: SoundFile[], priority = false) => {
     const ids: string[] = [];
     for (const sound of candidates) {
-      if (!sound.path || sound.source === "freesound" || sound.waveformReal) continue;
+      if (!sound.path || isCloudSound(sound) || sound.waveformReal) continue;
       if (waveformAnalysisQueued.has(sound.id)) {
         if (priority) {
           const queuedIndex = waveformAnalysisQueue.indexOf(sound.id);
@@ -570,7 +657,7 @@
     event.preventDefault();
     event.stopPropagation();
     const startX = event.clientX;
-    const startWidth = libraryWidth;
+    const startWidth = document.querySelector(".library-panel")?.getBoundingClientRect().width || libraryWidth;
     let pendingWidth = startWidth;
     let resizeFrame = 0;
     let finished = false;
@@ -666,6 +753,7 @@
   };
 
   const togglePlay = () => {
+    stopHover();
     if ((!selected?.path && !selected?.previewUrl) || !audio) return;
     if (!audio.paused) {
       audio.pause();
@@ -687,6 +775,7 @@
   };
 
   const stopPlayback = () => {
+    stopHover();
     if (audio) {
       audio.pause();
       audio.currentTime = audioUsesProcessedPreview ? 0 : segmentSelection?.start || 0;
@@ -740,7 +829,7 @@
         if (stillSelected()) {
           previewChannels = channels;
           waveformChannelsLoading = false;
-          if (current.path && current.source !== "freesound") commitRealWaveform(current, channels);
+          if (current.path && !isCloudSound(current)) commitRealWaveform(current, channels);
         }
       });
     }, 0);
@@ -763,7 +852,7 @@
   });
 
   $effect(() => {
-    const visibleLocalSounds = renderedSounds.filter((sound) => sound.source !== "freesound");
+    const visibleLocalSounds = renderedSounds.filter((sound) => !isCloudSound(sound));
     untrack(() => enqueueWaveformAnalysis(visibleLocalSounds, true));
   });
 
@@ -772,7 +861,7 @@
       if (selectedId) selectedId = "";
       return;
     }
-    if (!selectedId || !visibleSounds.some((sound) => sound.id === selectedId)) selectedId = visibleSounds[0].id;
+    if (selectedId && !visibleSounds.some((sound) => sound.id === selectedId)) selectedId = "";
   });
 
   $effect(() => {
@@ -847,7 +936,9 @@
   });
 
   $effect(() => {
-    const cloudEnabled = cloudSourceActive;
+    const cloudEnabled = cloudSourceActive && (selectedFolder === "all" || filter === "favorites");
+    const includeLibrary = cloudLibraryEnabled;
+    const includeFreesound = freesoundLibraryEnabled && freesoundSourceEnabled;
     const query = activeTab?.query.trim() || "";
     const apiKey = freesoundApiKey;
     const licenseFilter = freesoundLicenseFilter;
@@ -864,7 +955,12 @@
     }
     freesoundSearchController?.abort();
     freesoundSearchController = null;
-    if (!apiKey) {
+    // Retire results before the debounce, not after the next request completes.
+    freesoundSounds = [];
+    freesoundTotal = 0;
+    freesoundHasNext = false;
+    freesoundStatus = query.length >= 2 ? "loading" : "idle";
+    if (!includeLibrary && !apiKey) {
       freesoundSounds = [];
       freesoundTotal = 0;
       freesoundHasNext = false;
@@ -877,7 +973,7 @@
       freesoundTotal = 0;
       freesoundHasNext = false;
       freesoundStatus = "idle";
-      freesoundError = "Type at least two characters to search Freesound.";
+      freesoundError = "Type at least two characters to search the cloud library.";
       return;
     }
     const controller = new AbortController();
@@ -886,7 +982,7 @@
     const timer = window.setTimeout(() => {
       freesoundStatus = "loading";
       freesoundError = "";
-      searchFreesound(query, apiKey, licenseFilter, 1, controller.signal).then((page) => {
+      searchSoundSources(query, apiKey, licenseFilter, 1, includeLibrary, includeFreesound, controller.signal).then((page) => {
         if (controller.signal.aborted || generation !== freesoundSearchGeneration) return;
         freesoundSounds = hydrateFreesoundResults(page.sounds);
         freesoundTotal = page.total;
@@ -895,14 +991,16 @@
         freesoundStatus = "ready";
         const selectedStillVisible = (localSourceEnabled && sounds.some((sound) => sound.id === selectedId))
           || page.sounds.some((sound) => sound.id === selectedId);
-        if (!selectedStillVisible) selectedId = localVisibleSounds[0]?.id || page.sounds[0]?.id || "";
+        if (!selectedStillVisible) selectedId = "";
       }).catch((error) => {
         if (controller.signal.aborted || generation !== freesoundSearchGeneration) return;
         freesoundSounds = [];
         freesoundTotal = 0;
         freesoundHasNext = false;
         freesoundStatus = "error";
-        freesoundError = error instanceof Error ? error.message : "Freesound search failed.";
+        freesoundError = error && typeof error === "object" && "message" in error
+          ? String(error.message) : "Cloud search failed.";
+        notify("warning", freesoundError);
       });
     }, 420);
     return () => {
@@ -912,7 +1010,18 @@
   });
 
   $effect(() => {
+    const sound = selected;
+    if (sound?.source !== "scorpion" || sound.previewUrl || sound.path) return;
+    const controller = new AbortController();
+    resolveCloudPreview(sound, controller.signal).then(previewUrl => {
+      if (!controller.signal.aborted) updateSoundRecord({ ...sound, previewUrl });
+    }).catch(error => { if (!controller.signal.aborted) notify("warning", error.message || "Cloud preview unavailable."); });
+    return () => controller.abort();
+  });
+
+  $effect(() => {
     const id = selectedId;
+    selected?.previewUrl;
     const renderedPreviewUrl = processingPreviewUrl;
     const renderedPreviewScope = processingPreviewScope;
     const currentSelected = untrack(() => sounds.find((sound) => sound.id === id) || freesoundSounds.find((sound) => sound.id === id) || null);
@@ -946,6 +1055,7 @@
     };
     const previewSource = renderedPreviewUrl || (currentSelected?.path ? fileUrl(currentSelected.path) : currentSelected?.previewUrl || "");
     if (!previewSource) {
+      if (currentSelected?.source === "scorpion") return;
       startPendingPreview();
       return;
     }
@@ -1137,11 +1247,11 @@
           if (!sound.preparedProjectPath || sound.preparedProjectPath === context.projectPath) return sound;
           return {
             ...sound,
-            path: sound.source === "freesound" ? "" : sound.originalPath || sound.path,
+            path: isCloudSound(sound) ? "" : sound.originalPath || sound.path,
             extension: sound.originalExtension || sound.extension,
-            size: sound.source === "freesound" ? 0 : sound.size,
-            modifiedAt: sound.source === "freesound" ? 0 : sound.modifiedAt,
-            downloadState: sound.source === "freesound" ? "remote" : sound.downloadState,
+            size: isCloudSound(sound) ? 0 : sound.size,
+            modifiedAt: isCloudSound(sound) ? 0 : sound.modifiedAt,
+            downloadState: isCloudSound(sound) ? "remote" : sound.downloadState,
             preparedProjectPath: undefined,
             preparedProfile: undefined,
           };
@@ -1171,7 +1281,9 @@
 
   onMount(() => {
     const tooltipTarget = (target: EventTarget | null) => target instanceof Element ? target.closest<HTMLElement>(".tooltip[data-tooltip]") : null;
+    let tooltipGeneration = 0;
     const hideTooltip = () => {
+      tooltipGeneration += 1;
       if (tooltipTimer !== null) window.clearTimeout(tooltipTimer);
       tooltipTimer = null;
       if (tooltipHideTimer !== null) window.clearTimeout(tooltipHideTimer);
@@ -1184,7 +1296,8 @@
     };
     const showTooltip = (element: HTMLElement) => {
       hideTooltip();
-      tooltipTimer = window.setTimeout(() => {
+      const generation = tooltipGeneration;
+      tooltipTimer = window.setTimeout(async () => {
         const text = element.dataset.tooltip;
         if (!text || !document.documentElement.contains(element)) return;
         const rect = element.getBoundingClientRect();
@@ -1192,6 +1305,15 @@
         const halfWidth = Math.min(96, Math.max(42, window.innerWidth / 2 - 8));
         const center = rect.left + rect.width / 2;
         floatingTooltip = { text, x: Math.max(halfWidth, Math.min(window.innerWidth - halfWidth, center)), y: above ? rect.top - 7 : rect.bottom + 7, above };
+        await tick();
+        if (generation !== tooltipGeneration || !floatingTooltip) return;
+        const tooltip = document.querySelector<HTMLElement>(".floating-tooltip");
+        if (!tooltip) return;
+        const bounds = tooltip.getBoundingClientRect();
+        const placeAbove = rect.bottom + 7 + bounds.height > window.innerHeight - 8;
+        const x = Math.max(bounds.width / 2 + 8, Math.min(window.innerWidth - bounds.width / 2 - 8, center));
+        const top = Math.max(8, Math.min(window.innerHeight - bounds.height - 8, placeAbove ? rect.top - bounds.height - 7 : rect.bottom + 7));
+        floatingTooltip = { text, x, y: placeAbove ? top + bounds.height : top, above: placeAbove };
       }, 380);
     };
     const onPointerOver = (event: PointerEvent) => {
@@ -1207,6 +1329,8 @@
     document.addEventListener("pointerout", onPointerOut);
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", hideTooltip);
+    window.addEventListener("resize", hideTooltip);
+    document.addEventListener("scroll", hideTooltip, true);
     return () => {
       if (tooltipTimer !== null) window.clearTimeout(tooltipTimer);
       tooltipTimer = null;
@@ -1216,6 +1340,8 @@
       document.removeEventListener("pointerout", onPointerOut);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", hideTooltip);
+      window.removeEventListener("resize", hideTooltip);
+      document.removeEventListener("scroll", hideTooltip, true);
     };
   });
 
@@ -1243,6 +1369,7 @@
         searchInput?.focus();
         searchInput?.select();
       } else if (event.key === "Escape") {
+        if (document.querySelector(".toolbar-popover-panel")) return;
         if (effectsOpen) {
           effectsOpen = false;
           window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(".effects-button")?.focus());
@@ -1255,6 +1382,7 @@
         sidebarOpen = false;
         compactPreviewOpen = false;
       } else if (event.code === "Space" && !editing) {
+        if (target?.closest("button, [role='slider']")) return;
         event.preventDefault();
         event.stopImmediatePropagation();
         if (event.repeat) return;
@@ -1334,7 +1462,7 @@
         const hydrated = hydrateLibraryMetadata(nextFolders, nextSounds);
         folders = hydrated.folders;
         sounds = hydrated.sounds;
-        selectedId = hydrated.sounds[0]?.id || "";
+        selectedId = "";
         enqueueWaveformAnalysis(hydrated.sounds);
         tabs = createLibraryTabs();
         activeTabId = "search-library";
@@ -1469,8 +1597,22 @@
   };
 
   const selectSound = (id: string) => {
+    stopHover();
     if (autoPreview && id !== selectedId) pendingPlayId = id;
     selectedId = id;
+    compactPreviewOpen = true;
+  };
+  const closePreview = () => {
+    stopPlayback();
+    selectedId = "";
+    compactPreviewOpen = false;
+    effectsOpen = false;
+  };
+  const toggleSidebarPin = () => {
+    sidebarPinned = !sidebarPinned;
+    if (sidebarPinned) sidebarOpen = true;
+    else if (libraryWidth < LIBRARY_MIN_WIDTH) setLibraryWidth(LIBRARY_MIN_WIDTH, true);
+    try { localStorage.setItem(SIDEBAR_PIN_STORAGE_KEY, String(sidebarPinned)); } catch (_) { /* Storage may be unavailable in CEP. */ }
   };
 
   const moveSelection = (direction: number) => {
@@ -1481,18 +1623,37 @@
   };
 
   const updateSoundRecord = (nextSound: SoundFile) => {
-    if (nextSound.source === "freesound") {
+    if (isCloudSound(nextSound)) {
       freesoundSessionCache.set(nextSound.id, nextSound);
       freesoundSounds = freesoundSounds.map((sound) => sound.id === nextSound.id ? nextSound : sound);
+      savedCloudFavorites = savedCloudFavorites.map(sound => sound.id === nextSound.id ? nextSound : sound);
     } else {
       sounds = sounds.map((sound) => sound.id === nextSound.id ? nextSound : sound);
     }
   };
 
   const toggleFavorite = (sound: SoundFile) => {
-    const next = { ...sound, favorite: !sound.favorite };
+    stopHover();
+    favoriteEditing = sound;
+    if (audio) audio.pause();
+  };
+  const saveFavorite = (sound: SoundFile, destination: string, favorite: boolean) => {
+    const current = sounds.find(item => item.id === sound.id) || freesoundSounds.find(item => item.id === sound.id) || sound;
+    const next = { ...current, favorite, favoriteCollection: destination };
     updateSoundRecord(next);
-    saveSoundMetadata(next, { favorite: next.favorite });
+    saveSoundMetadata(next, { favorite, favoriteCollection: destination });
+    if (isCloudSound(next)) savedCloudFavorites = [...savedCloudFavorites.filter(item => item.id !== next.id), ...(favorite ? [next] : [])];
+    favoriteEditing = null;
+  };
+  const createCollection = (name: string, parentId: string) => {
+    const clean = name.trim().slice(0, 60);
+    if (!clean || /[\/\\]/.test(clean)) { notify("warning", "Use a folder name without slashes."); return ""; }
+    const existing = collections.find(item => item.parentId === parentId && item.name.toLowerCase() === clean.toLowerCase());
+    if (existing) return existing.id;
+    const id = `collection-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    collections = [...collections, { id, name: clean, parentId }];
+    saveFavoriteCollections(collections);
+    return id;
   };
 
   const updateSoundLabel = (sound: SoundFile, color?: LabelColor) => {
@@ -1546,10 +1707,10 @@
     projectPath,
   ].join("|");
 
-  const prepareSound = async (sound: SoundFile) => {
+  const prepareSound = async (sound: SoundFile, useDefaultProcessing = false) => {
     const requestedConversionPolicy = conversionPolicy;
     const requestedNormalization = normalization;
-    const requestedProcessing = sound.id === selectedId || sound.id.includes(":segment:") ? { ...processing } : { ...DEFAULT_AUDIO_PROCESSING };
+    const requestedProcessing = !useDefaultProcessing && (sound.id === selectedId || sound.id.includes(":segment:")) ? { ...processing } : { ...DEFAULT_AUDIO_PROCESSING };
     const requestKey = processingCacheKey(sound, requestedProcessing);
     const cached = getCachedProcessing(requestKey);
     if (cached) return cached;
@@ -1566,10 +1727,10 @@
       if (!needsPreparation && !sound.originalPath) return sound;
       updatePreparationStatus(
         sound,
-        sound.source === "freesound" && !sound.path ? "downloading" : "converting",
-        sound.source === "freesound" && !sound.path ? `Preparing ${sound.name}…` : `Preparing ${sound.name} for Adobe…`,
+        isCloudSound(sound) && !sound.path ? "downloading" : "converting",
+        isCloudSound(sound) && !sound.path ? `Preparing ${sound.name}…` : `Preparing ${sound.name} for Adobe…`,
       );
-      updateSoundRecord({ ...sound, downloadState: sound.source === "freesound" ? "downloading" : sound.downloadState });
+      updateSoundRecord({ ...sound, downloadState: isCloudSound(sound) ? "downloading" : sound.downloadState });
       try {
         if (!project) project = await getHostProjectContext();
         if (!project.ok) throw new Error(project.message);
@@ -1592,7 +1753,7 @@
         return nextSound;
       } catch (error) {
         clearPreparationStatus(sound.id);
-        if (sound.source === "freesound") {
+        if (isCloudSound(sound)) {
           const current = freesoundSounds.find((item) => item.id === sound.id) || sound;
           updateSoundRecord({ ...current, downloadState: "error" });
         }
@@ -1617,7 +1778,7 @@
     freesoundSearchController?.abort();
     freesoundSearchController = controller;
     try {
-      const page = await searchFreesound(query, freesoundApiKey, freesoundLicenseFilter, freesoundPage + 1, controller.signal);
+      const page = await searchSoundSources(query, freesoundApiKey, freesoundLicenseFilter, freesoundPage + 1, cloudLibraryEnabled, freesoundLibraryEnabled && freesoundSourceEnabled, controller.signal);
       if (controller.signal.aborted || generation !== freesoundSearchGeneration) return;
       const existing = new Set(freesoundSounds.map((sound) => sound.id));
       freesoundSounds = [
@@ -1664,7 +1825,7 @@
       folders = hydrated.folders;
       sounds = hydrated.sounds;
       persistLibraryFolders(hydrated.folders);
-      selectedId = hydrated.sounds.find((sound) => sound.folderId === result.folder.id)?.id || "";
+      selectedId = "";
       enqueueWaveformAnalysis(hydrated.sounds.filter((sound) => sound.folderId === result.folder.id));
       if (nextFolders.length === 1) {
         tabs = createLibraryTabs();
@@ -1726,7 +1887,7 @@
       const hydrated = hydrateLibraryMetadata(nextFolders, nextSounds);
       folders = hydrated.folders;
       sounds = hydrated.sounds;
-      selectedId = hydrated.sounds[0]?.id || "";
+      selectedId = "";
       persistLibraryFolders(hydrated.folders);
       enqueueWaveformAnalysis(hydrated.sounds);
       const refreshHasWarnings = failedLibraries > 0 || skippedPaths > 0;
@@ -1784,10 +1945,10 @@
     const removed = selected;
     if (!removed) return;
     const nextSelectedId = visibleSounds.find((sound) => sound.id !== removed.id)?.id || "";
-    if (removed.source === "freesound") freesoundSounds = freesoundSounds.filter((sound) => sound.id !== removed.id);
+    if (isCloudSound(removed)) freesoundSounds = freesoundSounds.filter((sound) => sound.id !== removed.id);
     else sounds = sounds.filter((sound) => sound.id !== removed.id);
     selectedId = nextSelectedId;
-    notify("info", removed.source === "freesound" ? "Removed from these cloud results. Downloaded project files were kept." : "Removed from the search index. The source file was kept.");
+    notify("info", isCloudSound(removed) ? "Removed from these cloud results. Downloaded project files were kept." : "Removed from the search index. The source file was kept.");
   };
 
   const deleteSettingsFolder = () => {
@@ -2038,12 +2199,14 @@
   };
 </script>
 
-<div class:sidebar-open={sidebarOpen} class="app-shell" data-host={host}>
+<div class:sidebar-open={sidebarOpen || sidebarPinned} class:sidebar-pinned={sidebarPinned} class="app-shell" data-host={host}>
   <header class="topbar">
     <div class="brand-block"><span class="brand-mark"><Icon name="waveform" size={18} /></span><div><strong>SoundDesigner</strong><small>Library workspace</small></div></div>
-    <IconButton icon="library" label="Toggle library drawer" onclick={() => sidebarOpen = !sidebarOpen} class="sidebar-toggle" active={sidebarOpen} pressed={sidebarOpen} />
+    <IconButton icon="library" label="Toggle library drawer" onclick={() => { if (sidebarPinned) toggleSidebarPin(); sidebarOpen = !sidebarOpen; }} class="sidebar-toggle" active={sidebarOpen || sidebarPinned} pressed={sidebarOpen || sidebarPinned} />
+    <IconButton icon="pin" label={sidebarPinned ? "Unpin library sidebar" : "Keep library sidebar visible"} onclick={toggleSidebarPin} active={sidebarPinned} pressed={sidebarPinned} />
     <div class="topbar-spacer"></div>
     <span class="host-pill tooltip" data-tooltip={`Connected to ${hostLabel(host)}`}><i></i>{hostLabel(host)}</span>
+    {#if host === "aftereffects"}<IconButton icon="sparkles" label="Open SFX Assistant" onclick={() => sfxAssistantOpen = true} active={sfxAssistantOpen} pressed={sfxAssistantOpen} />{/if}
     <IconButton icon="activity" label="Open library status" active={!isIndexing} onclick={() => sidebarOpen = true} />
     <IconButton icon="settings" label="Open panel settings" onclick={() => { settingsFolderId = null; settingsOpen = true; }} />
   </header>
@@ -2052,15 +2215,19 @@
     <LibrarySidebar
       {folders} {sounds} {selectedFolder} query={folderQuery} indexing={isIndexing} {indexProgress} {now}
       {localSourceEnabled} {freesoundLibraryEnabled} {freesoundSourceEnabled}
+      {cloudLibraryEnabled} onCloudLibraryEnabled={(enabled) => cloudLibraryEnabled = enabled}
       freesoundConnected={Boolean(freesoundApiKey)} freesoundCount={freesoundTotal}
-      onSelectFolder={(id) => { setActiveTabFolder(id); sidebarOpen = false; }}
+      onSelectFolder={(id, keepOpen = false) => { setActiveTabFolder(id); if (filter === "favorites") { filter = "all"; favoriteCollection = "all"; } if (keepOpen) sidebarOpen = true; else if (!sidebarPinned) sidebarOpen = false; }}
+      {collections} favoriteSounds={[...sounds.filter(sound => sound.favorite), ...savedCloudFavorites]}
+      favoriteSelected={filter === "favorites" ? favoriteCollection : null}
+      onSelectFavorites={(id) => { favoriteCollection = id; filter = "favorites"; updateSearchQuery(""); }}
       onQueryChange={(value) => folderQuery = value}
       onAddFolder={addFolder}
       onEditFolder={(id) => { settingsFolderId = id; settingsOpen = true; }}
       onFolderLabelColor={updateFolderLabel}
       onToggleFolderPinned={toggleFolderPinned}
       onRescan={rescanAll}
-      onClose={() => sidebarOpen = false}
+      onClose={() => { if (sidebarPinned) toggleSidebarPin(); sidebarOpen = false; }}
       onLocalSourceEnabled={(enabled) => localSourceEnabled = enabled}
       onFreesoundSourceEnabled={(enabled) => freesoundSourceEnabled = enabled}
       update={updateState}
@@ -2073,7 +2240,7 @@
       aria-label="Library panel width"
       aria-orientation="vertical"
       aria-valuemax={LIBRARY_MAX_WIDTH}
-      aria-valuemin={LIBRARY_MIN_WIDTH}
+      aria-valuemin={sidebarPinned ? 120 : LIBRARY_MIN_WIDTH}
       aria-valuenow={libraryWidth}
       aria-valuetext={`${libraryWidth} pixels wide`}
       class="library-resizer tooltip"
@@ -2088,22 +2255,55 @@
 
     <section class="search-workspace">
       <SearchTabs {tabs} activeId={activeTabId} onActivate={(id) => activeTabId = id} onAdd={addSearchTab} onClose={closeSearchTab} />
-      <div class="search-toolbar">
+      <div bind:clientWidth={toolbarWidth} class:is-compact-toolbar={toolbarWidth < 260} class="search-toolbar">
         <label class="hero-search">
           <Icon name="search" />
           <input bind:this={searchInput} aria-label="Sound search" autocomplete="off" name="sound-search" oninput={(event) => updateSearchQuery(event.currentTarget.value)} placeholder={searchPlaceholder} spellcheck="false" value={activeTab?.query || ""} />
           {#if activeTab?.query}<IconButton icon="close" label="Clear search" onclick={() => updateSearchQuery("")} />{/if}
           <kbd>⌘ K</kbd>
         </label>
+        <div class="compact-browse-bar">
+        <ToolbarPopover label="Search scope" icon="folder" caption={toolbarWidth >= 580 ? folderBreadcrumb : ""}>
+        <div class="browse-scope">
+          <span class="tooltip" data-tooltip={filter === "favorites" ? "Favorites across all folders" : folderBreadcrumb}>{filter === "favorites" ? favoriteCollection === "all" ? "All favorites" : `Favorites / ${collections.find(item => item.id === favoriteCollection)?.name || "Main"}` : folderBreadcrumb}</span>
+          {#if selectedFolder !== "all" && filter !== "favorites"}
+            <label title="Include audio from nested folders"><input type="checkbox" bind:checked={includeSubfolders} /> Include subfolders</label>
+            <button class="scope-button tooltip" aria-label="Search all sounds" data-tooltip="Search across the whole library" onclick={() => setActiveTabFolder("all")} type="button"><Icon name="search" size={12} /><span>Search all sounds</span></button>
+          {/if}
+        </div>
+        </ToolbarPopover>
         <div class="search-actions">
+          {#if toolbarWidth < 430}
+            <select class="compact-filter-select tooltip" aria-label="Sound filters" data-tooltip="Filter sounds" value={filter} onchange={(event) => { filter = event.currentTarget.value as typeof filter; if (filter === "favorites") favoriteCollection = "all"; }}>
+              {#each FILTERS as item (item.id)}<option value={item.id}>{item.label}{item.id === "favorites" ? ` (${favoriteCount})` : ""}</option>{/each}
+            </select>
+          {:else}
           <div class="filter-chips" aria-label="Sound filters">
             {#each FILTERS as item (item.id)}
-              <button class:is-active={filter === item.id} onclick={() => filter = item.id} type="button">{item.label}{#if item.id === "favorites"}<span class="tiny-badge">{favoriteCount}</span>{/if}</button>
+              <button class:is-active={filter === item.id} onclick={() => { filter = item.id; if (item.id === "favorites") favoriteCollection = "all"; }} type="button">{item.label}{#if item.id === "favorites"}<span class="tiny-badge">{favoriteCount}</span>{/if}</button>
             {/each}
           </div>
+          {/if}
+          <IconButton icon={gridView ? "list" : "grid"} label={gridView ? "Switch to list view" : "Switch to waveform grid"} onclick={() => gridView = !gridView} active={gridView} pressed={gridView} />
+          <ToolbarPopover label="Browse options" icon="sliders">
+          <div class="browse-options">
+          <span class="section-label">BROWSE OPTIONS</span>
+          <div class="browse-option-row"><span>Color label</span>
           <ColorLabelPicker color={labelFilter} label="Filter by color label" onChange={(color) => labelFilter = color} />
+          </div>
+          <div class="browse-option-row"><span>Settings</span>
           <IconButton icon="sliders" label="Open search and library settings" onclick={() => { settingsFolderId = null; settingsOpen = true; }} />
+          </div>
+          <div class="browse-option-row"><span>Compact rows</span>
           <IconButton icon="list" label={compactResults ? "Use comfortable result density" : "Use compact result density"} active={compactResults} pressed={compactResults} onclick={toggleResultDensity} />
+          </div>
+          <div class="browse-option-row"><span>Hover audition</span>
+          <IconButton icon="volume" label={hoverPreview ? "Disable hover audition" : "Enable hover audition (350 ms delay)"} onclick={() => hoverPreview = !hoverPreview} active={hoverPreview} pressed={hoverPreview} />
+          </div>
+          {#if gridView}<label class="browse-option-row">Tile size<input class="tile-size-control tooltip" data-tooltip="Waveform tile size" aria-label="Waveform tile size" type="range" min="120" max="240" step="10" bind:value={tileSize} /></label>{/if}
+          </div>
+          </ToolbarPopover>
+        </div>
         </div>
       </div>
 
@@ -2124,8 +2324,8 @@
           <span>Sorted by <button aria-label={`Change result sorting. Current sort: ${sortLabel}`} class="tooltip" data-tooltip="Change result sorting" onclick={cycleSortMode} type="button">{sortLabel} <Icon name="chevron" size={12} /></button></span>
           <IconButton
             icon="waveform"
-            label={compactPreviewOpen ? "Show sound results" : "Show spectrum preview"}
-            onclick={() => compactPreviewOpen = !compactPreviewOpen}
+            label={compactPreviewOpen ? "Close preview and show results" : "Show spectrum preview"}
+            onclick={() => { if (compactPreviewOpen) closePreview(); else if (selected) compactPreviewOpen = true; }}
             active={compactPreviewOpen}
             pressed={compactPreviewOpen}
             class="compact-preview-toggle"
@@ -2136,11 +2336,16 @@
       <div
         class:is-preview-open={compactPreviewOpen}
         class:has-effects={effectsOpen}
+        class:has-selection={Boolean(selected)}
         class="search-content"
       >
         <div
           bind:this={resultsList}
           bind:clientHeight={resultsViewportHeight}
+          bind:clientWidth={resultsViewportWidth}
+          class:is-grid={gridView}
+          class:is-short-results={resultsViewportHeight < 220}
+          style={`--tile-columns: ${gridColumns}`}
           class:is-relaxed={!compactResults}
           class="results-list"
           role="listbox"
@@ -2163,11 +2368,13 @@
                 playing={playing && sound.id === selectedId}
                 progress={sound.id === selectedId ? progress : 0}
                 preparation={soundPreparation[sound.id]}
-                dragHint={sound.source === "freesound" && !sound.path
+                dragHint={isCloudSound(sound) && !sound.path
                   ? soundPreparation[sound.id] ? "Preparing automatically…" : "Drag to prepare automatically"
                   : host === "aftereffects" ? "Drag into the active composition" : "Drag to host (support varies)"}
                 onSelect={() => selectSound(sound.id)}
-                onPlay={() => { if (sound.id !== selectedId) { pendingPlayId = sound.id; selectedId = sound.id; } else togglePlay(); }}
+                onHover={() => auditionHover(sound)}
+                onLeave={() => { if (hoverSoundId === sound.id) stopHover(); }}
+                onPlay={() => { stopHover(); compactPreviewOpen = true; if (sound.id !== selectedId || (sound.source === "scorpion" && !sound.previewUrl && !sound.path)) { pendingPlayId = sound.id; selectedId = sound.id; } else togglePlay(); }}
                 onInsert={() => { selectedId = sound.id; insertSelected(sound); }}
                 onFavorite={() => toggleFavorite(sound)}
                 onLabelColor={(color) => updateSoundLabel(sound, color)}
@@ -2183,7 +2390,7 @@
                 Load more from Freesound
               </button>
             {/if}
-          {:else if localSourceEnabled && !folders.length && cloudSourceActive && !freesoundApiKey}
+          {:else if localSourceEnabled && !folders.length && cloudSourceActive && !cloudLibraryEnabled && !freesoundApiKey}
             <div class="empty-state empty-state--library">
               <span class="empty-glyph"><Icon name="library" size={22} /></span>
               <strong>Set up a sound source</strong>
@@ -2193,7 +2400,7 @@
                 <button class="primary-button" onclick={() => { settingsFolderId = null; settingsOpen = true; }} type="button"><Icon name="settings" /> Connect Freesound</button>
               </div>
             </div>
-          {:else if cloudSourceActive && !freesoundApiKey}
+          {:else if cloudSourceActive && !cloudLibraryEnabled && !freesoundApiKey}
             <div class="empty-state empty-state--cloud">
               <span class="empty-glyph"><Icon name="cloud" size={22} /></span>
               <strong>Connect Freesound</strong>
@@ -2201,21 +2408,28 @@
               <button class="primary-button" onclick={() => { settingsFolderId = null; settingsOpen = true; }} type="button"><Icon name="settings" /> Open settings</button>
             </div>
           {:else if cloudSourceActive && freesoundStatus === "loading" && !freesoundSounds.length}
-            <div class="results-loading" aria-live="polite" aria-label="Searching Freesound">
+            <div class="results-loading" aria-live="polite" aria-label="Searching cloud sounds">
               {#each Array(5) as _, index (index)}<div class="sound-row-skeleton"><i></i><span></span><b></b></div>{/each}
             </div>
           {:else if cloudSourceActive && freesoundStatus === "error" && !freesoundSounds.length}
             <div class="empty-state empty-state--cloud">
               <span class="empty-glyph"><Icon name="cloud" size={22} /></span>
-              <strong>Freesound is unavailable</strong>
+              <strong>Cloud search is unavailable</strong>
               <span>{freesoundError}</span>
               <button class="ghost-button" onclick={() => freesoundRefreshNonce += 1} type="button"><Icon name="refresh" /> Try again</button>
             </div>
           {:else if cloudSourceActive && !localSourceEnabled && (activeTab?.query.trim().length || 0) < 2}
             <div class="empty-state empty-state--cloud">
               <span class="empty-glyph"><Icon name="search" size={22} /></span>
-              <strong>Search the Freesound library</strong>
+              <strong>Search the cloud library</strong>
               <span>Type at least two characters. Cloud results are loaded only when you search.</span>
+            </div>
+          {:else if cloudSourceActive && freesoundSounds.length && !freesoundVisibleSounds.length}
+            <div class="empty-state">
+              <span class="empty-glyph"><Icon name="sliders" size={22} /></span>
+              <strong>Cloud results are hidden by filters</strong>
+              <span>{freesoundSounds.length} cloud sounds were found. Clear the category and color filters to show them.</span>
+              <button class="ghost-button" onclick={() => { filter = "all"; labelFilter = undefined; }} type="button">Clear filters</button>
             </div>
           {:else if localSourceEnabled && !folders.length}
             <div class="empty-state empty-state--library">
@@ -2227,33 +2441,15 @@
           {:else}
             <div class="empty-state">
               <span class="empty-glyph"><Icon name="waveform" size={22} /></span>
-              <strong>No sounds match this search</strong>
-              <span>Try fewer keywords, change the enabled Library sources, or adjust the Freesound license filter.</span>
-              {#if localSourceEnabled}<button class="ghost-button" onclick={addFolder} type="button"><Icon name="folder" /> Add folder</button>{/if}
+              <strong>No sounds found</strong>
+              <span>{selectedFolder === "all" ? "Try fewer keywords or clear the active filters." : "No matching audio in this folder. Include subfolders or search all sounds."}</span>
+              <div class="empty-state-actions">
+                <button class="ghost-button" onclick={() => { updateSearchQuery(""); filter = "all"; labelFilter = undefined; }} type="button">Clear search and filters</button>
+                {#if selectedFolder !== "all"}<button class="ghost-button" onclick={() => setActiveTabFolder("all")} type="button">Search all sounds</button>{/if}
+              </div>
             </div>
           {/if}
         </div>
-        <PreviewPane
-          sound={selected}
-          channels={previewChannels}
-          channelsLoading={waveformChannelsLoading}
-          {progress}
-          {zoom}
-          reversed={processing.reverse}
-          selection={segmentSelection}
-          {segmentPreparing}
-          segmentReady={host === "browser" ? Boolean(segmentSelection) : Boolean(preparedSegment)}
-          {effectsOpen} {processing} processingBusy={processingPreviewBusy} processingError={processingPreviewError}
-          onSeek={seek}
-          onZoomIn={() => zoom = Math.min(3, zoom + 0.5)}
-          onZoomOut={() => zoom = Math.max(1, zoom - 0.5)}
-          onSelectionChange={updateSegmentSelection}
-          onSegmentDragStart={dragSelectedSegment}
-          onSegmentDragEnd={finishSelectedSegmentDrag}
-          onProcessing={updateProcessing}
-          onResetProcessing={() => updateProcessing({ ...DEFAULT_AUDIO_PROCESSING })}
-          onCloseEffects={() => effectsOpen = false}
-        />
       </div>
     </section>
   </main>
@@ -2269,7 +2465,39 @@
     onToggleEffects={() => effectsOpen = !effectsOpen}
     onInsert={() => insertSelected()}
     onRemove={removeSelectedFromIndex}
-  />
+  >
+    {#snippet waveform()}
+        <PreviewPane
+          sound={selected}
+          channels={previewChannels}
+          channelsLoading={waveformChannelsLoading}
+          {progress}
+          {zoom}
+          reversed={!processing.bypass && processing.reverse}
+          selection={segmentSelection}
+          {segmentPreparing}
+          segmentReady={host === "browser" ? Boolean(segmentSelection) : Boolean(preparedSegment)}
+          onSeek={seek}
+          onZoomIn={() => zoom = Math.min(3, zoom + 0.5)}
+          onZoomOut={() => zoom = Math.max(1, zoom - 0.5)}
+          onSelectionChange={updateSegmentSelection}
+          onSegmentDragStart={dragSelectedSegment}
+          onSegmentDragEnd={finishSelectedSegmentDrag}
+          onProcessing={updateProcessing}
+          onClose={closePreview}
+        />
+    {/snippet}
+  </Transport>
+
+  {#if effectsOpen && selected}
+    <EffectsRack
+      sound={selected} {processing} processingBusy={processingPreviewBusy} processingError={processingPreviewError}
+      segmentDuration={segmentSelection ? segmentSelection.end - segmentSelection.start : 0}
+      onProcessing={updateProcessing}
+      onReset={() => updateProcessing({ ...DEFAULT_AUDIO_PROCESSING })}
+      onClose={() => effectsOpen = false}
+    />
+  {/if}
 
   <div class="toast-stack" aria-live="polite">
     {#each toasts as toast (toast.id)}
@@ -2302,4 +2530,12 @@
     onClose={() => settingsOpen = false}
     onDelete={deleteSettingsFolder}
   />
+  <SfxAssistantSheet
+    open={sfxAssistantOpen} {sounds} {folders} cloudEnabled={cloudLibraryEnabled}
+    onClose={() => sfxAssistantOpen = false}
+    onStopPreview={stopPlayback}
+    onPrepareRemote={(sound) => prepareSound(sound, true)}
+    onNotice={notify}
+  />
+  <FavoriteSheet sound={favoriteEditing} {collections} onSave={saveFavorite} onCreate={createCollection} onClose={() => favoriteEditing = null} />
 </div>
