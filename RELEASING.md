@@ -26,12 +26,10 @@ The panel checks the public GitHub repository `iboyshanto/SoundDesigner` for the
 4. Commit the source/version change and push it. Create the tag `v1.2.3` from that exact commit.
 5. Add `.github/releases/vX.Y.Z.md` with the release notes before tagging. The tag workflow builds with the persistent publisher certificate and creates a draft release containing:
    - `SoundDesigner-v1.2.3.zxp`
-   - `SoundDesigner-v1.2.3.zxp.sha256`
    - `SoundDesigner-v1.2.3-Windows-Setup.exe`
-   - `SoundDesigner-v1.2.3-Windows-Setup.exe.sha256`
    - `SoundDesigner-v1.2.3-macOS.dmg`
-   - `SoundDesigner-v1.2.3-macOS.dmg.sha256`
-6. Verify the draft's ZXP signature, manifest version, checksums, Windows install and macOS drag install, then publish it as the latest stable release. Existing installations will discover it during their next automatic check (at most once per 24 hours), or immediately from Settings > Updates > Check now. Confirm the public latest-release endpoint and test the updater with the previous and new installed versions.
+   - `SoundDesigner.png`
+6. Verify the draft's ZXP signature, manifest version, Windows install and macOS drag install, then publish it as the latest stable release. Existing installations will discover it during their next automatic check (at most once per 24 hours), or immediately from Settings > Updates > Check now. Confirm the public latest-release endpoint and test the updater with the previous and new installed versions.
 
 ## Platform installers
 

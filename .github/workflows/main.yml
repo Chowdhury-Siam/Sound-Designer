@@ -86,6 +86,11 @@ jobs:
         with:
           path: release-artifacts
           merge-multiple: true
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          printf '%s\n\n' '![SoundDesigner](https://raw.githubusercontent.com/iboyshanto/SoundDesigner/main/.github/assets/SoundDesigner.png)' > release-body.md
+          cat ".github/releases/${{ needs.release-info.outputs.tag }}.md" >> release-body.md
       - name: Prepare GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -93,7 +98,9 @@ jobs:
           tag_name: ${{ needs.release-info.outputs.tag }}
           target_commitish: ${{ github.sha }}
           draft: true
-          body_path: .github/releases/${{ needs.release-info.outputs.tag }}.md
+          body_path: release-body.md
           files: |
-            release-artifacts/*
-            .github/assets/SoundDesigner-v*.png
+            release-artifacts/*.zxp
+            release-artifacts/*-Windows-Setup.exe
+            release-artifacts/*-macOS.dmg
+            .github/assets/SoundDesigner.png

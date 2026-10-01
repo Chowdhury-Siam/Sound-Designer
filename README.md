@@ -148,7 +148,7 @@ Download the installer for your operating system from [GitHub Releases](https://
 
 Restart Premiere Pro or After Effects, then open **Window → Extensions** or **Window → Extensions (Legacy)** and choose **SoundDesigner**.
 
-Each installer has a matching `.sha256` file on the release page. The signed `.zxp` is also available as an advanced manual-install fallback.
+The signed `.zxp` is also available as an advanced manual-install fallback.
 
 > [!TIP]
 > Save the Adobe project before using cloud audio, conversion, effects rendering, or segment export. SoundDesigner uses the project location to keep prepared media portable and organized.
@@ -385,7 +385,7 @@ bun run installer:macos
 bun run test:installers
 ```
 
-The EXE must be built on Windows and the DMG on macOS. Pushing a semantic version tag such as `v1.2.3` runs `.github/workflows/main.yml`, builds both installers and their SHA-256 files, and prepares a **draft** GitHub Release. The workflow requires these repository secrets:
+The EXE must be built on Windows and the DMG on macOS. Pushing a semantic version tag such as `v1.2.3` runs `.github/workflows/main.yml`, builds both installers, and prepares a **draft** GitHub Release. The workflow requires these repository secrets:
 
 - `SOUNDDESIGNER_ZXP_CERT_BASE64` — the publisher `.p12` encoded as Base64.
 - `SOUNDDESIGNER_ZXP_PASSWORD` — the certificate password.
