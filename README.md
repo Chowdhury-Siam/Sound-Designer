@@ -1,6 +1,6 @@
 <div align="center">
 
-<img alt="SoundDesigner v1.0.3 — More room. More control." src=".github/assets/SoundDesigner.svg" width="800">
+<img alt="SoundDesigner v1.0.3 — More room. More control." src=".github/assets/SoundDesigner.png" width="800">
 
 **Find it. Shape it. Drop it into the edit.**
 
