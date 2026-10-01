@@ -148,8 +148,6 @@ Download the installer for your operating system from [GitHub Releases](https://
 
 Restart Premiere Pro or After Effects, then open **Window → Extensions** or **Window → Extensions (Legacy)** and choose **SoundDesigner**.
 
-The signed `.zxp` is also available as an advanced manual-install fallback.
-
 > [!TIP]
 > Save the Adobe project before using cloud audio, conversion, effects rendering, or segment export. SoundDesigner uses the project location to keep prepared media portable and organized.
 
@@ -354,7 +352,7 @@ bun run build
 | `src/jsx/aeft` | After Effects host integration |
 | `scripts` | Smoke tests, certificate creation, release packaging, and platform installer builders |
 | `cep.config.ts` | CEP hosts, runtime floor, manifest, and build configuration |
-| `.github/workflows/main.yml` | Tagged signed ZXP, EXE, and DMG release automation |
+| `.github/workflows/main.yml` | Signed Windows EXE and macOS DMG release automation |
 
 ---
 

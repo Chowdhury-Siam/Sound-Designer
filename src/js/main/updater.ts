@@ -99,10 +99,8 @@ const assetScore = (asset: ReleaseAsset): number => {
   const isWindows = typeof navigator !== "undefined" && navigator.platform.toLowerCase().indexOf("win") === 0;
   const isMac = typeof navigator !== "undefined" && navigator.platform.toLowerCase().indexOf("mac") === 0;
   let score = 0;
-  if (/\.zxp$/.test(name)) score += 80;
-  else if (/\.zip$/.test(name)) score += 60;
-  else if (isWindows && /\.(exe|msi)$/.test(name)) score += 50;
-  else if (isMac && /\.(pkg|dmg)$/.test(name)) score += 50;
+  if (isWindows && /\.(exe|msi)$/.test(name)) score += 80;
+  else if (isMac && /\.(pkg|dmg)$/.test(name)) score += 80;
   else return -1;
   if (isWindows && /(?:win|windows)/.test(name)) score += 20;
   if (isMac && /(?:mac|macos)/.test(name)) score += 20;

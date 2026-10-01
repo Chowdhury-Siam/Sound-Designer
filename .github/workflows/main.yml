@@ -100,7 +100,6 @@ jobs:
           draft: true
           body_path: release-body.md
           files: |
-            release-artifacts/*.zxp
             release-artifacts/*-Windows-Setup.exe
             release-artifacts/*-macOS.dmg
             .github/assets/SoundDesigner.png

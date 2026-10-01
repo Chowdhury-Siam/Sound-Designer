@@ -24,6 +24,6 @@ runInNewContext(result.outputFiles[0].text,{
 const state=await module.exports.checkForUpdates(true);
 assert.equal(state.status,expectedStatus,JSON.stringify(state));
 assert.equal(state.latestVersion,expectedLatest);
-assert.equal(state.assetName,`SoundDesigner-v${expectedLatest}.zxp`);
-assert.equal(state.downloadUrl,`https://github.com/iboyshanto/SoundDesigner/releases/download/v${expectedLatest}/SoundDesigner-v${expectedLatest}.zxp`);
+assert.equal(state.assetName,`SoundDesigner-v${expectedLatest}-macOS.dmg`);
+assert.equal(state.downloadUrl,`https://github.com/iboyshanto/SoundDesigner/releases/download/v${expectedLatest}/SoundDesigner-v${expectedLatest}-macOS.dmg`);
 console.log(`Installed ${installedVersion}: ${state.status}; latest ${state.latestVersion}; ${state.assetName}`);

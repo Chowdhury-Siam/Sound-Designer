@@ -20,7 +20,7 @@ assert.match(workflow, /startsWith\(github\.event\.head_commit\.message, '🚀 R
 assert.match(workflow, /tag_name: \$\{\{ needs\.release-info\.outputs\.tag \}\}/);
 assert.match(workflow, /SOUNDDESIGNER_RELEASE_TAG: \$\{\{ needs\.release-info\.outputs\.tag \}\}/);
 assert.match(workflow, /raw\.githubusercontent\.com\/iboyshanto\/SoundDesigner\/main\/\.github\/assets\/SoundDesigner\.png/);
-assert.match(workflow, /release-artifacts\/\*\.zxp/);
+assert.doesNotMatch(workflow, /release-artifacts\/\*\.zxp/);
 assert.doesNotMatch(workflow, /release-artifacts\/\*\s*$/m);
 assert.match(workflow, /bun run release:package && bun run installer:windows/);
 assert.match(workflow, /name: windows-release[\s\S]*path: release/);

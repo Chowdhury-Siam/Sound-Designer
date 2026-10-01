@@ -1,6 +1,6 @@
 # SoundDesigner release procedure
 
-The panel checks the public GitHub repository `iboyshanto/SoundDesigner` for the latest stable GitHub Release. It accepts semantic tags such as `v1.2.3`, ignores drafts and prereleases, and prefers a release asset named `SoundDesigner-v1.2.3.zxp`.
+The panel checks the public GitHub repository `iboyshanto/SoundDesigner` for the latest stable GitHub Release. It accepts semantic tags such as `v1.2.3`, ignores drafts and prereleases, and selects the Windows EXE or macOS DMG for the current platform.
 
 ## One-time setup
 
@@ -21,11 +21,10 @@ The panel checks the public GitHub repository `iboyshanto/SoundDesigner` for the
 
    CI may instead provide `SOUNDDESIGNER_ZXP_CERT` and `SOUNDDESIGNER_ZXP_PASSWORD` through secrets. The GitHub workflow expects `SOUNDDESIGNER_ZXP_CERT_BASE64` and `SOUNDDESIGNER_ZXP_PASSWORD`.
 
-3. Install and smoke-test `release/SoundDesigner-v1.2.3.zxp` in supported Premiere Pro and After Effects versions on both operating systems.
+3. Verify the internal signed ZXP, then install and smoke-test the generated EXE and DMG in supported Premiere Pro and After Effects versions.
    Include a saved-project Freesound download, unsupported local audio conversion, optional −1 dBFS normalization, Project-panel `SoundDesigner` organization, and a project-switch cache check.
 4. Commit the source/version change and push it. Create the tag `v1.2.3` from that exact commit.
 5. Add `.github/releases/vX.Y.Z.md` with the release notes before tagging. The tag workflow builds with the persistent publisher certificate and creates a draft release containing:
-   - `SoundDesigner-v1.2.3.zxp`
    - `SoundDesigner-v1.2.3-Windows-Setup.exe`
    - `SoundDesigner-v1.2.3-macOS.dmg`
    - `SoundDesigner.png`
@@ -42,6 +41,6 @@ The panel checks the public GitHub repository `iboyshanto/SoundDesigner` for the
 
 - The running extension never downloads into its installation directory, executes a file, or silently replaces itself.
 - Release and asset URLs must belong to the configured GitHub repository.
-- A missing ZXP asset falls back to the GitHub Release page so installation guidance remains visible.
+- A missing compatible installer falls back to the GitHub Release page so installation guidance remains visible.
 - GitHub errors, rate limits, offline hosts, malformed versions, and oversized responses fail gracefully; a previously verified cached result remains usable.
 - The update check runs in panel JavaScript through CEP Node HTTPS. It does not cross `evalScript` and does not modify the ES3 ExtendScript host layer.
