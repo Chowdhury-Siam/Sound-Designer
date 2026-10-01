@@ -46,7 +46,7 @@ jobs:
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\sounddesigner-publisher.p12", [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
       - name: Build signed extension and Windows installer
         env:
-          GITHUB_REF_NAME: ${{ needs.release-info.outputs.tag }}
+          SOUNDDESIGNER_RELEASE_TAG: ${{ needs.release-info.outputs.tag }}
           SOUNDDESIGNER_ZXP_CERT: ${{ runner.temp }}\sounddesigner-publisher.p12
           SOUNDDESIGNER_ZXP_PASSWORD: ${{ secrets.SOUNDDESIGNER_ZXP_PASSWORD }}
         run: bun run release:package && bun run installer:windows

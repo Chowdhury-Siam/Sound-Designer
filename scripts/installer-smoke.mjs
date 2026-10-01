@@ -18,6 +18,7 @@ assert.match(workflow, /runs-on: macos-latest/);
 assert.match(workflow, /branches:\s+- main/);
 assert.match(workflow, /startsWith\(github\.event\.head_commit\.message, '🚀 RELEASE v'\)/);
 assert.match(workflow, /tag_name: \$\{\{ needs\.release-info\.outputs\.tag \}\}/);
+assert.match(workflow, /SOUNDDESIGNER_RELEASE_TAG: \$\{\{ needs\.release-info\.outputs\.tag \}\}/);
 assert.match(workflow, /bun run release:package && bun run installer:windows/);
 assert.match(workflow, /name: windows-release[\s\S]*path: release/);
 assert.match(workflow, /node scripts\/build-macos-installer\.mjs/);
@@ -33,5 +34,6 @@ assert.match(macBuilder, /\.VolumeIcon\.icns/);
 assert.match(macBuilder, /background\.png/);
 assert.match(macBuilder, /hdiutil/);
 assert.match(packager, /ZXPSignCmd/);
+assert.match(packager, /process\.env\.SOUNDDESIGNER_RELEASE_TAG/);
 
 console.log("Installer release wiring passed.");

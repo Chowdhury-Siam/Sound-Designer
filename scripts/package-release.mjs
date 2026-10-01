@@ -8,8 +8,8 @@ const packageJson = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
 
 const version = String(packageJson.version || "");
 const expectedTag = `v${version}`;
-if (process.env.GITHUB_REF_NAME && process.env.GITHUB_REF_NAME !== expectedTag) {
-  throw new Error(`Git tag ${process.env.GITHUB_REF_NAME} does not match package version ${expectedTag}.`);
+if (process.env.SOUNDDESIGNER_RELEASE_TAG && process.env.SOUNDDESIGNER_RELEASE_TAG !== expectedTag) {
+  throw new Error(`Release tag ${process.env.SOUNDDESIGNER_RELEASE_TAG} does not match package version ${expectedTag}.`);
 }
 if (!/^\d+\.\d+\.\d+$/.test(version)) {
   throw new Error(`package.json version must be semantic x.y.z; received "${version}".`);
