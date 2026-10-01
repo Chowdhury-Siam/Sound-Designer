@@ -11,8 +11,8 @@
   import IconButton from "./IconButton.svelte";
 
   let {
-    open, folder, autoPreview, loop, insertionTarget, conversionPolicy, normalization, freesoundLibraryEnabled, freesoundApiKey, freesoundLicenseFilter,
-    update, onAutoPreview, onLoop, onInsertionTarget, onConversionPolicy, onNormalization, onFreesoundApiKey,
+    open, folder, autoPreview, loop, insertionTarget, conversionPolicy, normalization, normalizationTargetDb, freesoundLibraryEnabled, freesoundApiKey, freesoundLicenseFilter,
+    update, onAutoPreview, onLoop, onInsertionTarget, onConversionPolicy, onNormalization, onNormalizationTargetDb, onFreesoundApiKey,
     onFreesoundLibraryEnabled, onFreesoundLicenseFilter, onOpenFreesoundSetup, onOpenFreesoundTerms, onBrowseFreesound, onCheckUpdate, onOpenUpdate, onClose, onDelete,
   }: {
     open: boolean;
@@ -22,6 +22,7 @@
     insertionTarget: InsertionTarget;
     conversionPolicy: AudioConversionPolicy;
     normalization: AudioNormalization;
+    normalizationTargetDb: number;
     freesoundLibraryEnabled: boolean;
     freesoundApiKey: string;
     freesoundLicenseFilter: FreesoundLicenseFilter;
@@ -31,6 +32,7 @@
     onInsertionTarget: (value: InsertionTarget) => void;
     onConversionPolicy: (value: AudioConversionPolicy) => void;
     onNormalization: (value: AudioNormalization) => void;
+    onNormalizationTargetDb: (value: number) => void;
     onFreesoundLibraryEnabled: (value: boolean) => void;
     onFreesoundApiKey: (value: string) => void;
     onFreesoundLicenseFilter: (value: FreesoundLicenseFilter) => void;
@@ -48,6 +50,7 @@
   let draftInsertionTarget = $state<InsertionTarget>("playhead");
   let draftConversionPolicy = $state<AudioConversionPolicy>("unsupported");
   let draftNormalization = $state<AudioNormalization>("preserve");
+  let draftNormalizationTargetDb = $state(-3);
   let draftFreesoundLibraryEnabled = $state(false);
   let draftFreesoundApiKey = $state("");
   let draftFreesoundLicenseFilter = $state<FreesoundLicenseFilter>("commercial");
@@ -60,6 +63,7 @@
       draftInsertionTarget = insertionTarget;
       draftConversionPolicy = conversionPolicy;
       draftNormalization = normalization;
+      draftNormalizationTargetDb = normalizationTargetDb;
       draftFreesoundLibraryEnabled = freesoundLibraryEnabled;
       draftFreesoundApiKey = freesoundApiKey;
       draftFreesoundLicenseFilter = freesoundLicenseFilter;
@@ -186,7 +190,18 @@
               <input checked={draftNormalization === "peak-minus-one"} name="normalization" onchange={() => draftNormalization = "peak-minus-one"} type="radio" />
               <span><strong>Peak normalize to −1 dBFS</strong><small>Creates a non-destructive WAV and applies one gain value across every channel.</small></span>
             </label>
+            <label class="choice-row">
+              <input checked={draftNormalization === "manual"} name="normalization" onchange={() => draftNormalization = "manual"} type="radio" />
+              <span><strong>Manual peak target</strong><small>Choose the peak level applied when audio is inserted into the timeline.</small></span>
+            </label>
           </div>
+          {#if draftNormalization === "manual"}
+            <label class="normalization-target">
+              <span><strong>Target peak</strong><output>{draftNormalizationTargetDb === 0 ? "0.0" : `−${Math.abs(draftNormalizationTargetDb).toFixed(1)}`} dBFS</output></span>
+              <input aria-label="Manual normalization target" max="0" min="-24" oninput={(event) => draftNormalizationTargetDb = Number(event.currentTarget.value)} step="0.5" style={`--range-progress: ${((draftNormalizationTargetDb + 24) / 24) * 100}%`} type="range" value={draftNormalizationTargetDb} />
+              <span aria-hidden="true" class="normalization-range"><small>−24 dBFS</small><small>0 dBFS</small></span>
+            </label>
+          {/if}
           {#if draftNormalization !== "preserve" && draftConversionPolicy === "never"}
             <p class="settings-notice">Normalization requires a processed WAV and therefore overrides “Never convert” for normalized sounds.</p>
           {/if}
@@ -256,6 +271,7 @@
           onInsertionTarget(draftInsertionTarget);
           onConversionPolicy(draftConversionPolicy);
           onNormalization(draftNormalization);
+          onNormalizationTargetDb(draftNormalizationTargetDb);
           onFreesoundLibraryEnabled(draftFreesoundLibraryEnabled);
           onFreesoundApiKey(draftFreesoundApiKey.trim());
           onFreesoundLicenseFilter(draftFreesoundLicenseFilter);

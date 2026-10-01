@@ -84,6 +84,9 @@ const normalizedSegment = await renderAudioProcessing(
 );
 assertNear(normalizedSegment.channels[0][0], Math.pow(10, -1 / 20), 0.0001, "segment-only normalization");
 assertNear(normalizedSegment.channels[0][1], -Math.pow(10, -1 / 20), 0.0001, "segment-only normalization polarity");
+const manualNormalization = await renderAudioProcessing(rangedBuffer, undefined, "manual", undefined, 1, 3, -6);
+assertNear(manualNormalization.channels[0][0], Math.pow(10, -6 / 20), 0.0001, "manual normalization target");
+assertNear(manualNormalization.channels[0][1], -Math.pow(10, -6 / 20), 0.0001, "manual normalization polarity");
 
 const stereoWave = await encodeRenderedWave({
   channels: [new Float32Array([0, 0.5]), new Float32Array([0, -0.5])],

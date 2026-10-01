@@ -46,7 +46,7 @@
     <span class="now-glyph"><Icon name="waveform" /></span>
     <div><span class="eyebrow">{playing ? "Playing" : "Preview"}</span><strong class="tooltip" data-tooltip={sound?.name || "Select a sound"}>{sound ? sound.name : "Select a sound"}</strong></div>
   </div>
-  <div class="transport-controls">
+  <div aria-label="Playback controls" class="transport-controls" role="group">
     <IconButton icon="previous" label="Previous sound" onclick={onPrevious} disabled={!sound} />
     <button aria-label={playing ? "Pause preview" : "Play preview"} class="play-button tooltip" data-tooltip={playing ? "Pause preview" : "Play preview"} disabled={!sound} onclick={onTogglePlay} type="button">
       <Icon name={playing ? "pause" : "play"} size={18} />
@@ -54,16 +54,30 @@
     <IconButton icon="next" label="Next sound" onclick={onNext} disabled={!sound} />
     <IconButton icon="stop" label="Stop and return to start" onclick={onStop} disabled={!sound} />
     <IconButton icon="loop" label="Loop preview" active={loop} pressed={loop} onclick={onLoop} />
-    <button aria-controls="audio-effects-rack" aria-expanded={effectsOpen} aria-label={processingCount ? `Audio effects, ${processingCount} active` : "Audio effects"} class:active={effectsOpen || processingCount > 0} class="effects-button tooltip" data-tooltip="Audio effects" disabled={!sound} onclick={onToggleEffects} type="button">
+    <button aria-controls="audio-effects-rack" aria-expanded={effectsOpen} aria-label={processingCount ? `Audio effects, ${processingCount} active` : "Audio effects"} aria-pressed={effectsOpen} class:active={effectsOpen || processingCount > 0} class="effects-button tooltip" data-tooltip="Audio effects" disabled={!sound} onclick={onToggleEffects} type="button">
       {#if processingBusy}<span class="spinner"></span>{:else}<span class="fx-mark">FX</span>{/if}
       {#if processingCount > 0}<i class="fx-active-dot" class:is-bypassed={processing.bypass}></i>{/if}
     </button>
   </div>
   <div class="player-waveform">{@render waveform()}</div>
-  <div class="transport-right">
-    <span class="transport-time">{sound ? formatDuration(progress * (sound.duration || 0)) : "0:00"}{#if segmentDuration > 0}<small> / {formatDuration(processedDuration)} output</small>{/if}</span>
+  <div class:has-segment={segmentDuration > 0} class="transport-right">
+    <div class="transport-status">
+      <span class="transport-time" aria-label={sound ? `${formatDuration(progress * (sound.duration || 0))} of ${formatDuration(sound.duration || 0)}` : "No sound selected"}>
+        <strong>{sound ? formatDuration(progress * (sound.duration || 0)) : "0:00"}</strong>
+        <i>/ {sound ? formatDuration(sound.duration || 0) : "0:00"}</i>
+      </span>
+      {#if segmentDuration > 0}<small class="segment-output">{formatDuration(processedDuration)} segment</small>{/if}
+    </div>
     <IconButton icon="trash" label="Remove from index (keeps source file)" onclick={onRemove} disabled={!sound} class="danger-icon" />
-    <button class="primary-button tooltip" data-tooltip={segmentDuration > 0 ? "Insert selected audio segment with active effects" : "Insert at the current playhead with active effects"} disabled={!sound || busy || processingBusy} onclick={onInsert} type="button">
+    <button
+      aria-busy={busy || processingBusy}
+      aria-label={segmentDuration > 0 ? "Insert selected audio segment" : "Insert sound at the current playhead"}
+      class="primary-button tooltip"
+      data-tooltip={segmentDuration > 0 ? "Insert selected audio segment with active effects" : "Insert at the current playhead with active effects"}
+      disabled={!sound || busy || processingBusy}
+      onclick={onInsert}
+      type="button"
+    >
       {#if busy}<span class="spinner"></span>{:else}<Icon name="download" />{/if}
       <span class="insert-label-full">{segmentDuration > 0 ? "Insert segment" : "Insert"}</span>
       <span class="insert-label-compact">Insert</span>

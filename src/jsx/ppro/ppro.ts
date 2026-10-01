@@ -272,6 +272,7 @@ export function organizeAudioMedia(request: InsertAudioRequest): HostResult {
     }
     targetBin = findOrCreateSoundDesignerBin(project.rootItem);
     moved = moveProjectItemsToSoundDesigner(project.rootItem, normalizedPath, targetBin) > 0;
+    if (request.name) projectItem.name = request.name;
     return {
       ok: true,
       host: "premiere",
@@ -339,6 +340,7 @@ export function insertAudioClip(request: InsertAudioRequest): HostResult {
     }
     moveProjectItemsToSoundDesigner(project.rootItem, normalizedPath, targetBin);
     projectItem = findProjectItem(targetBin, normalizedPath) || projectItem;
+    if (request.name) projectItem.name = request.name;
 
     playhead = sequence.getPlayerPosition();
     playheadSeconds = Number(playhead.seconds);

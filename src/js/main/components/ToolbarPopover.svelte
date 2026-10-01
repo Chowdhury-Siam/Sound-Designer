@@ -35,12 +35,12 @@
 </script>
 
 <div bind:this={root} class="toolbar-popover">
-  <button bind:this={trigger} class="toolbar-popover-trigger tooltip" class:is-active={open} aria-label={label} aria-expanded={open} data-tooltip={label} onclick={toggle} type="button">
+  <button bind:this={trigger} class="toolbar-popover-trigger tooltip" class:is-active={open} aria-haspopup="dialog" aria-label={label} aria-expanded={open} data-tooltip={label} onclick={toggle} type="button">
     <Icon name={icon} size={14} />
     {#if caption}<span>{caption}</span>{/if}
   </button>
   {#if open}
-    <div bind:this={panel} use:overlayLayer class="toolbar-popover-panel" role="group" aria-label={label} style:left={`${x}px`} style:top={`${y}px`}>
+    <div bind:this={panel} use:overlayLayer class="toolbar-popover-panel" role="dialog" aria-label={label} style:left={`${x}px`} style:top={`${y}px`}>
       {@render children()}
     </div>
   {/if}

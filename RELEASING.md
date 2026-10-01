@@ -7,7 +7,7 @@ The panel checks the public GitHub repository `iboyshanto/SoundDesigner` for the
 1. Create the public repository `https://github.com/iboyshanto/SoundDesigner` or change `UPDATE_REPOSITORY` in `src/js/main/updater.ts` before the first public build.
 2. Run `bun run certificate:create` once and enter a strong password when prompted. This creates `.signing/SoundDesigner-publisher.p12` without printing or storing the password.
 3. Securely back up the certificate and password. The `.signing` directory is ignored by Git; never commit or publish the certificate.
-4. Test the signed package on macOS and Windows with the installer/distribution path you publish to users.
+4. Test the signed package and platform installer on macOS and Windows.
 5. If Freesound is enabled in a commercial release, obtain the required API-use permission from Freesound and verify that the release UX preserves creator, source URL, and license metadata.
 
 ## Publish a stable update
@@ -27,7 +27,18 @@ The panel checks the public GitHub repository `iboyshanto/SoundDesigner` for the
 5. Add `.github/releases/vX.Y.Z.md` with the release notes before tagging. The tag workflow builds with the persistent publisher certificate and creates a draft release containing:
    - `SoundDesigner-v1.2.3.zxp`
    - `SoundDesigner-v1.2.3.zxp.sha256`
-6. Verify the draft's ZXP signature, manifest version and checksum, then publish it as the latest stable release. Existing installations will discover it during their next automatic check (at most once per 24 hours), or immediately from Settings > Updates > Check now. Confirm the public latest-release endpoint and test the updater with the previous and new installed versions.
+   - `SoundDesigner-v1.2.3-Windows-Setup.exe`
+   - `SoundDesigner-v1.2.3-Windows-Setup.exe.sha256`
+   - `SoundDesigner-v1.2.3-macOS.dmg`
+   - `SoundDesigner-v1.2.3-macOS.dmg.sha256`
+6. Verify the draft's ZXP signature, manifest version, checksums, Windows install and macOS drag install, then publish it as the latest stable release. Existing installations will discover it during their next automatic check (at most once per 24 hours), or immediately from Settings > Updates > Check now. Confirm the public latest-release endpoint and test the updater with the previous and new installed versions.
+
+## Platform installers
+
+- Windows uses the custom SoundDesigner setup UI and installs system-wide to `%CommonProgramFiles(x86)%\Adobe\CEP\extensions\com.rksound.designer`. It requests administrator access and safely replaces an older installation.
+- macOS uses the native drag-to-install pattern. Open the branded DMG and drag `SoundDesigner` onto `Adobe CEP Extensions`; Finder requests administrator access for the system extension directory when needed.
+- The macOS DMG does not contain a custom installer app, so it needs no separate app signing or notarization. Its extension payload is still the signed ZXP produced by the release job.
+- Run `bun run test:installers` before tagging. Platform artifacts themselves are built on their matching GitHub runners.
 
 ## Safety contract
 

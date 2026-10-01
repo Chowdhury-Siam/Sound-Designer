@@ -24,7 +24,7 @@ import { isCloudSound } from "./cloudLibrary";
   } from "./hostBridge";
   import { csi, openLinkInBrowser } from "../lib/utils/bolt";
   import { compactWaveformFromChannels, decodeAudioWaveformChannels, decodeRemoteAudioWaveformChannels, renderProcessedPreview } from "./audioWaveform";
-  import { audioProcessingKey, DEFAULT_AUDIO_PROCESSING, hasAudioProcessing, normalizeAudioProcessing } from "./audioEffects";
+  import { audioNormalizationKey, audioProcessingKey, DEFAULT_AUDIO_PROCESSING, hasAudioProcessing, normalizeAudioProcessing, normalizeTargetDb } from "./audioEffects";
   import { searchSoundSources, loadCloudEnabled, saveCloudEnabled, resolveCloudPreview } from "./cloudLibrary";
   import { prepareAudioForHost, prepareAudioSegmentForHost, requiresProjectAudioPreparation } from "./projectAudio";
   import { createLibraryTabs, createSearchTab, searchTabLabel, updateSearchTabFolder, updateSearchTabQuery } from "./searchTabs";
@@ -188,7 +188,8 @@ import { isCloudSound } from "./cloudLibrary";
           : Boolean(typeof stored.freesoundApiKey === "string" && stored.freesoundApiKey.trim()),
         freesoundSourceEnabled: typeof stored.freesoundSourceEnabled === "boolean" ? stored.freesoundSourceEnabled : true,
         conversionPolicy: stored.conversionPolicy === "always" || stored.conversionPolicy === "never" ? stored.conversionPolicy : "unsupported",
-        normalization: stored.normalization === "peak-minus-one" ? stored.normalization : "preserve",
+        normalization: stored.normalization === "peak-minus-one" || stored.normalization === "manual" ? stored.normalization : "preserve",
+        normalizationTargetDb: normalizeTargetDb(typeof stored.normalizationTargetDb === "number" ? stored.normalizationTargetDb : -3),
         freesoundApiKey: typeof stored.freesoundApiKey === "string" ? stored.freesoundApiKey : "",
         freesoundLicenseFilter: stored.freesoundLicenseFilter === "cc0" || stored.freesoundLicenseFilter === "all" ? stored.freesoundLicenseFilter : "commercial",
       };
@@ -202,6 +203,7 @@ import { isCloudSound } from "./cloudLibrary";
         freesoundSourceEnabled: true,
         conversionPolicy: "unsupported" as AudioConversionPolicy,
         normalization: "preserve" as AudioNormalization,
+        normalizationTargetDb: -3,
         freesoundApiKey: "",
         freesoundLicenseFilter: "commercial" as FreesoundLicenseFilter,
       };
@@ -217,6 +219,7 @@ import { isCloudSound } from "./cloudLibrary";
     nextFreesoundSourceEnabled: boolean,
     nextConversionPolicy: AudioConversionPolicy,
     nextNormalization: AudioNormalization,
+    nextNormalizationTargetDb: number,
     nextFreesoundApiKey: string,
     nextFreesoundLicenseFilter: FreesoundLicenseFilter,
   ) => {
@@ -230,6 +233,7 @@ import { isCloudSound } from "./cloudLibrary";
         freesoundSourceEnabled: nextFreesoundSourceEnabled,
         conversionPolicy: nextConversionPolicy,
         normalization: nextNormalization,
+        normalizationTargetDb: normalizeTargetDb(nextNormalizationTargetDb),
         freesoundApiKey: nextFreesoundApiKey,
         freesoundLicenseFilter: nextFreesoundLicenseFilter,
       }));
@@ -323,6 +327,7 @@ import { isCloudSound } from "./cloudLibrary";
   let autoPreview = $state(preferences.autoPreview);
   let conversionPolicy = $state<AudioConversionPolicy>(preferences.conversionPolicy);
   let normalization = $state<AudioNormalization>(preferences.normalization);
+  let normalizationTargetDb = $state(preferences.normalizationTargetDb);
   let freesoundApiKey = $state(preferences.freesoundApiKey);
   let freesoundLicenseFilter = $state<FreesoundLicenseFilter>(preferences.freesoundLicenseFilter);
   let toasts = $state<ToastMessage[]>([]);
@@ -441,6 +446,11 @@ import { isCloudSound } from "./cloudLibrary";
     activeSegmentPreparation = null;
     segmentPreparationGeneration += 1;
     segmentPreparing = false;
+  };
+
+  const invalidatePreparedSegment = () => {
+    preparedSegment = null;
+    cancelSegmentPreparation();
   };
 
   const soundSearchText = (sound: SoundFile) => {
@@ -804,6 +814,7 @@ import { isCloudSound } from "./cloudLibrary";
     freesoundSourceEnabled,
     conversionPolicy,
     normalization,
+    normalizationTargetDb,
     freesoundApiKey,
     freesoundLicenseFilter,
   ));
@@ -1020,6 +1031,28 @@ import { isCloudSound } from "./cloudLibrary";
   });
 
   $effect(() => {
+    const currentIndex = visibleSounds.findIndex(sound => sound.id === selectedId);
+    const nextSound = currentIndex >= 0 ? visibleSounds[(currentIndex + 1) % visibleSounds.length] : null;
+    if (!nextSound || nextSound.id === selectedId || !isCloudSound(nextSound) || nextSound.path) return;
+    const controller = new AbortController();
+    let warmAudio: HTMLAudioElement | null = null;
+    const timer = window.setTimeout(async () => {
+      try {
+        const previewUrl = nextSound.previewUrl || (nextSound.source === "scorpion" ? await resolveCloudPreview(nextSound, controller.signal) : "");
+        if (controller.signal.aborted || !previewUrl) return;
+        warmAudio = new Audio(previewUrl);
+        warmAudio.preload = "metadata";
+        warmAudio.load();
+      } catch (_) { /* Prefetch is optional; explicit playback reports failures. */ }
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+      if (warmAudio) { warmAudio.removeAttribute("src"); warmAudio.load(); }
+    };
+  });
+
+  $effect(() => {
     const id = selectedId;
     selected?.previewUrl;
     const renderedPreviewUrl = processingPreviewUrl;
@@ -1148,10 +1181,20 @@ import { isCloudSound } from "./cloudLibrary";
     };
     const onEnded = () => {
       stopPlaybackFrame();
-      if (!nextAudio.loop) {
-        playing = false;
-        progress = activePreviewScope && currentSelected?.duration ? activePreviewScope.end / currentSelected.duration : 1;
+      const activeSelection = segmentSelection;
+      if (loop) {
+        const restartAt = activeSelection && !usesProcessedPreview ? activeSelection.start : 0;
+        nextAudio.currentTime = restartAt;
+        progress = activePreviewScope && currentSelected?.duration
+          ? activePreviewScope.start / currentSelected.duration
+          : restartAt / Math.max(nextAudio.duration || 0, 0.001);
+        nextAudio.play().catch(() => {
+          if (audio === nextAudio) playing = false;
+        });
+        return;
       }
+      playing = false;
+      progress = activePreviewScope && currentSelected?.duration ? activePreviewScope.end / currentSelected.duration : 1;
     };
     const onError = () => {
       if (audio !== nextAudio) return;
@@ -1508,7 +1551,7 @@ import { isCloudSound } from "./cloudLibrary";
     sound.path,
     sound.size,
     sound.modifiedAt,
-    `${conversionPolicy}:${normalization}`,
+    `${conversionPolicy}:${audioNormalizationKey(normalization, normalizationTargetDb)}`,
     audioProcessingKey(processing),
     Math.round(selection.start * 1000),
     Math.round(selection.end * 1000),
@@ -1554,6 +1597,7 @@ import { isCloudSound } from "./cloudLibrary";
         project,
         conversionPolicy,
         normalization,
+        normalizationTargetDb,
         processing,
         signal: controller.signal,
       });
@@ -1703,13 +1747,14 @@ import { isCloudSound } from "./cloudLibrary";
     sound.path,
     sound.size,
     sound.modifiedAt,
-    `${conversionPolicy}:${normalization}:${audioProcessingKey(requestedProcessing)}`,
+    `${conversionPolicy}:${audioNormalizationKey(normalization, normalizationTargetDb)}:${audioProcessingKey(requestedProcessing)}`,
     projectPath,
   ].join("|");
 
   const prepareSound = async (sound: SoundFile, useDefaultProcessing = false) => {
     const requestedConversionPolicy = conversionPolicy;
     const requestedNormalization = normalization;
+    const requestedNormalizationTargetDb = normalizationTargetDb;
     const requestedProcessing = !useDefaultProcessing && (sound.id === selectedId || sound.id.includes(":segment:")) ? { ...processing } : { ...DEFAULT_AUDIO_PROCESSING };
     const requestKey = processingCacheKey(sound, requestedProcessing);
     const cached = getCachedProcessing(requestKey);
@@ -1717,13 +1762,13 @@ import { isCloudSound } from "./cloudLibrary";
     const existing = preparingSounds.get(requestKey);
     if (existing) return existing;
     const task = (async () => {
-      const profile = `${requestedConversionPolicy}:${requestedNormalization}:${audioProcessingKey(requestedProcessing)}`;
+      const profile = `${requestedConversionPolicy}:${audioNormalizationKey(requestedNormalization, requestedNormalizationTargetDb)}:${audioProcessingKey(requestedProcessing)}`;
       let project = null as Awaited<ReturnType<typeof getHostProjectContext>> | null;
       if (sound.path && sound.preparedProfile === profile && sound.preparedProjectPath) {
         project = await getHostProjectContext();
         if (project.ok && project.projectPath === sound.preparedProjectPath) return sound;
       }
-      const needsPreparation = requiresProjectAudioPreparation(sound, requestedConversionPolicy, requestedNormalization, requestedProcessing);
+      const needsPreparation = requiresProjectAudioPreparation(sound, requestedConversionPolicy, requestedNormalization, requestedProcessing, requestedNormalizationTargetDb);
       if (!needsPreparation && !sound.originalPath) return sound;
       updatePreparationStatus(
         sound,
@@ -1739,6 +1784,7 @@ import { isCloudSound } from "./cloudLibrary";
           project,
           conversionPolicy: requestedConversionPolicy,
           normalization: requestedNormalization,
+          normalizationTargetDb: requestedNormalizationTargetDb,
           processing: requestedProcessing,
           onProgress: (stage, message, nextProgress) => updatePreparationStatus(sound, stage, message, nextProgress),
         });
@@ -2035,7 +2081,7 @@ import { isCloudSound } from "./cloudLibrary";
       if (host === "aftereffects") prepareAfterEffectsDrag(cached);
       return;
     }
-    if (requiresProjectAudioPreparation(sound, conversionPolicy, normalization, requestedProcessing)) {
+    if (requiresProjectAudioPreparation(sound, conversionPolicy, normalization, requestedProcessing, normalizationTargetDb)) {
       startPreparationDrag(sound);
       return;
     }
@@ -2049,7 +2095,7 @@ import { isCloudSound } from "./cloudLibrary";
       dragSound(cached, event);
       return;
     }
-    if (requiresProjectAudioPreparation(sound, conversionPolicy, normalization, requestedProcessing)) {
+    if (requiresProjectAudioPreparation(sound, conversionPolicy, normalization, requestedProcessing, normalizationTargetDb)) {
       const session = startPreparationDrag(sound);
       session.leftPanel = false;
       session.cancelled = false;
@@ -2278,9 +2324,9 @@ import { isCloudSound } from "./cloudLibrary";
               {#each FILTERS as item (item.id)}<option value={item.id}>{item.label}{item.id === "favorites" ? ` (${favoriteCount})` : ""}</option>{/each}
             </select>
           {:else}
-          <div class="filter-chips" aria-label="Sound filters">
+          <div class="filter-chips" aria-label="Sound filters" role="group">
             {#each FILTERS as item (item.id)}
-              <button class:is-active={filter === item.id} onclick={() => { filter = item.id; if (item.id === "favorites") favoriteCollection = "all"; }} type="button">{item.label}{#if item.id === "favorites"}<span class="tiny-badge">{favoriteCount}</span>{/if}</button>
+              <button aria-pressed={filter === item.id} class:is-active={filter === item.id} onclick={() => { filter = item.id; if (item.id === "favorites") favoriteCollection = "all"; }} type="button">{item.label}{#if item.id === "favorites"}<span class="tiny-badge">{favoriteCount}</span>{/if}</button>
             {/each}
           </div>
           {/if}
@@ -2510,12 +2556,19 @@ import { isCloudSound } from "./cloudLibrary";
   {/if}
 
   <SettingsSheet
-    open={settingsOpen} folder={settingsFolder} {autoPreview} {loop} {insertionTarget} {conversionPolicy} {normalization} {freesoundLibraryEnabled} {freesoundApiKey} {freesoundLicenseFilter} update={updateState}
+    open={settingsOpen} folder={settingsFolder} {autoPreview} {loop} {insertionTarget} {conversionPolicy} {normalization} {normalizationTargetDb} {freesoundLibraryEnabled} {freesoundApiKey} {freesoundLicenseFilter} update={updateState}
     onAutoPreview={(value) => autoPreview = value}
     onLoop={(value) => loop = value}
     onInsertionTarget={(value) => insertionTarget = value}
     onConversionPolicy={(value) => conversionPolicy = value}
-    onNormalization={(value) => normalization = value}
+    onNormalization={(value) => {
+      normalization = value;
+      invalidatePreparedSegment();
+    }}
+    onNormalizationTargetDb={(value) => {
+      normalizationTargetDb = normalizeTargetDb(value);
+      invalidatePreparedSegment();
+    }}
     onFreesoundLibraryEnabled={(enabled) => {
       freesoundLibraryEnabled = enabled;
       freesoundSourceEnabled = enabled;

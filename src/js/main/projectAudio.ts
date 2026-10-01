@@ -10,7 +10,7 @@ import type {
   HostProjectContext,
   SoundFile,
 } from "./types";
-import { audioProcessingKey, encodeRenderedWave, hasAudioProcessing, renderAudioProcessing } from "./audioEffects";
+import { audioNormalizationKey, audioProcessingKey, encodeRenderedWave, hasAudioProcessing, normalizeTargetDb, renderAudioProcessing } from "./audioEffects";
 
 const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
 const MAX_DECODE_BYTES = 128 * 1024 * 1024;
@@ -33,7 +33,8 @@ export const requiresProjectAudioPreparation = (
   conversionPolicy: AudioConversionPolicy,
   normalization: AudioNormalization,
   processing?: AudioProcessingSettings,
-) => Boolean(sound.path && sound.preparedProfile === `${conversionPolicy}:${normalization}:${audioProcessingKey(processing)}`)
+  normalizationTargetDb = -1,
+) => Boolean(sound.path && sound.preparedProfile === `${conversionPolicy}:${audioNormalizationKey(normalization, normalizationTargetDb)}:${audioProcessingKey(processing)}`)
   ? false
   : isCloudSound(sound)
   || normalization !== "preserve"
@@ -46,6 +47,7 @@ export type PrepareAudioOptions = {
   project: HostProjectContext;
   conversionPolicy: AudioConversionPolicy;
   normalization: AudioNormalization;
+  normalizationTargetDb: number;
   processing?: AudioProcessingSettings;
   signal?: AbortSignal;
   onProgress?: (stage: AudioPreparationStage, message: string, progress?: number) => void;
@@ -247,8 +249,9 @@ const encodePcm24Wave = async (
   signal?: AbortSignal,
   frameStart = 0,
   frameEnd = audioBuffer.length,
+  normalizationTargetDb = -1,
 ) => {
-  const rendered = await renderAudioProcessing(audioBuffer, processing, normalization, signal, frameStart, frameEnd);
+  const rendered = await renderAudioProcessing(audioBuffer, processing, normalization, signal, frameStart, frameEnd, normalizationTargetDb);
   const dataLength = rendered.length * rendered.channels.length * 3;
   if (dataLength > MAX_CONVERTED_PCM_BYTES) throw new Error("This sound is too long to convert safely in the Adobe panel. Trim it or convert it externally first.");
   if (dataLength + 44 > 0xffffffff) throw new Error("The converted WAV would exceed the 4 GB RIFF limit.");
@@ -266,9 +269,9 @@ const writeJsonAtomically = (filePath: string, value: unknown) => {
   fs.renameSync(temporary, filePath);
 };
 
-const fileFingerprint = (sound: SoundFile, sourcePath: string, policy: AudioConversionPolicy, normalization: AudioNormalization, processing?: AudioProcessingSettings) => {
+const fileFingerprint = (sound: SoundFile, sourcePath: string, policy: AudioConversionPolicy, normalization: AudioNormalization, normalizationTargetDb: number, processing?: AudioProcessingSettings) => {
   const stat = fs.statSync(sourcePath);
-  const key = [sound.source || "local", sound.sourceId || sound.id, sourcePath, stat.size, stat.mtimeMs, policy, normalization, audioProcessingKey(processing)].join("|");
+  const key = [sound.source || "local", sound.sourceId || sound.id, sourcePath, stat.size, stat.mtimeMs, policy, audioNormalizationKey(normalization, normalizationTargetDb), audioProcessingKey(processing)].join("|");
   return crypto.createHash("sha1").update(key).digest("hex").slice(0, 12);
 };
 
@@ -374,16 +377,17 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
   let converted = false;
 
   if (needsConversion) {
-    options.onProgress?.("converting", options.normalization === "peak-minus-one" ? `Converting and normalizing ${sound.name}…` : `Converting ${sound.name} to WAV…`);
-    const fingerprint = fileFingerprint(sound, workingPath, options.conversionPolicy, options.normalization, options.processing);
-    const suffix = options.normalization === "peak-minus-one" ? "-norm-1db" : "";
+    options.onProgress?.("converting", options.normalization !== "preserve" ? `Converting and normalizing ${sound.name}…` : `Converting ${sound.name} to WAV…`);
+    const fingerprint = fileFingerprint(sound, workingPath, options.conversionPolicy, options.normalization, options.normalizationTargetDb, options.processing);
+    const targetDb = options.normalization === "manual" ? normalizeTargetDb(options.normalizationTargetDb) : -1;
+    const suffix = options.normalization !== "preserve" ? `-norm-${Math.abs(targetDb).toFixed(1).replace(".", "p")}db` : "";
     preparedPath = path.join(directories.converted, `${safeName(sound.sourceId || sound.id, "sound")}-${safeName(sound.name, "audio")}-${fingerprint}${suffix}.wav`);
     if (!fs.existsSync(preparedPath)) {
       const temporary = `${preparedPath}.part`;
       try {
         const decoded = await decodeAudio(workingPath, options.signal);
         if (options.signal?.aborted) throw new DOMException("Audio preparation was cancelled.", "AbortError");
-        const encoded = await encodePcm24Wave(decoded, options.normalization, options.processing, options.signal);
+        const encoded = await encodePcm24Wave(decoded, options.normalization, options.processing, options.signal, 0, decoded.length, options.normalizationTargetDb);
         gainDb = encoded.gainDb;
         preparedDuration = encoded.duration;
         await writeFileAsync(temporary, encoded.bytes);
@@ -405,6 +409,7 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
       sampleRate: "preserved",
       channels: "preserved",
       normalization: options.normalization,
+      normalizationTargetDb: options.normalization === "manual" ? normalizeTargetDb(options.normalizationTargetDb) : -1,
       processing: options.processing,
       gainDb,
       createdAt: new Date().toISOString(),
@@ -424,7 +429,7 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
         : sound.duration,
       downloadState: isCloudSound(sound) ? "ready" : sound.downloadState,
       preparedProjectPath: options.project.projectPath,
-      preparedProfile: `${options.conversionPolicy}:${options.normalization}:${audioProcessingKey(options.processing)}`,
+      preparedProfile: `${options.conversionPolicy}:${audioNormalizationKey(options.normalization, options.normalizationTargetDb)}:${audioProcessingKey(options.processing)}`,
       originalPath: isCloudSound(sound) ? sound.originalPath : sound.originalPath || workingPath,
       originalExtension: sound.originalExtension || sound.extension,
     },
@@ -468,7 +473,7 @@ export const prepareAudioSegmentForHost = async (
   const startFrame = Math.floor(startSeconds * decoded.sampleRate);
   const endFrame = Math.min(decoded.length, Math.ceil(endSeconds * decoded.sampleRate));
   const directories = projectDirectories(options.project);
-  const sourceFingerprint = fileFingerprint(preparedSource.sound, sourcePath, options.conversionPolicy, options.normalization, options.processing);
+  const sourceFingerprint = fileFingerprint(preparedSource.sound, sourcePath, options.conversionPolicy, options.normalization, options.normalizationTargetDb, options.processing);
   const rangeToken = `${segmentTimeToken(startSeconds)}-${segmentTimeToken(endSeconds)}`;
   const fingerprint = crypto.createHash("sha1")
     .update(`${sourceFingerprint}|${rangeToken}|${audioProcessingKey(options.processing)}|pcm24`)
@@ -480,7 +485,7 @@ export const prepareAudioSegmentForHost = async (
   if (!fs.existsSync(outputPath)) {
     const temporary = `${outputPath}.part`;
     try {
-      const encoded = await encodePcm24Wave(decoded, options.normalization, options.processing, options.signal, startFrame, endFrame);
+      const encoded = await encodePcm24Wave(decoded, options.normalization, options.processing, options.signal, startFrame, endFrame, options.normalizationTargetDb);
       await writeFileAsync(temporary, encoded.bytes);
       if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
       fs.renameSync(temporary, outputPath);
@@ -508,6 +513,7 @@ export const prepareAudioSegmentForHost = async (
     sampleRate: decoded.sampleRate,
     channels: decoded.numberOfChannels,
     normalization: options.normalization,
+    normalizationTargetDb: options.normalization === "manual" ? normalizeTargetDb(options.normalizationTargetDb) : -1,
     processing: options.processing,
     createdAt: new Date().toISOString(),
   });
@@ -526,7 +532,7 @@ export const prepareAudioSegmentForHost = async (
       waveform: sound.waveform,
       downloadState: isCloudSound(sound) ? "ready" : sound.downloadState,
       preparedProjectPath: options.project.projectPath,
-      preparedProfile: `${options.conversionPolicy}:${options.normalization}:${audioProcessingKey(options.processing)}`,
+      preparedProfile: `${options.conversionPolicy}:${audioNormalizationKey(options.normalization, options.normalizationTargetDb)}:${audioProcessingKey(options.processing)}`,
       originalPath: preparedSource.sound.originalPath || sourcePath,
       originalExtension: preparedSource.sound.originalExtension || preparedSource.sound.extension,
     },

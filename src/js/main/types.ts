@@ -8,7 +8,7 @@ export type SoundSource = "local" | "freesound" | "scorpion";
 
 export type AudioConversionPolicy = "unsupported" | "always" | "never";
 
-export type AudioNormalization = "preserve" | "peak-minus-one";
+export type AudioNormalization = "preserve" | "peak-minus-one" | "manual";
 
 export type AudioPreparationStage = "downloading" | "converting";
 
@@ -48,6 +48,7 @@ export type SoundDesignerPreferences = {
   insertionTarget: InsertionTarget;
   conversionPolicy: AudioConversionPolicy;
   normalization: AudioNormalization;
+  normalizationTargetDb: number;
   freesoundApiKey: string;
   freesoundLicenseFilter: FreesoundLicenseFilter;
 };

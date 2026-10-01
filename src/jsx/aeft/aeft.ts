@@ -226,6 +226,7 @@ export function organizeAudioMedia(request: InsertAudioRequest): HostResult {
     }
     app.beginUndoGroup("SoundDesigner: Organize Audio");
     undoOpen = true;
+    if (request.name) footage.name = request.name;
     moved = moveAllFootageToSoundDesigner(sourceFile) > 0;
     return {
       ok: true,
@@ -300,8 +301,10 @@ export function insertAudioClip(request: InsertAudioRequest): HostResult {
     if (!footage) {
       throw new Error("After Effects did not return imported footage.");
     }
+    if (request.name) footage.name = request.name;
     moveAllFootageToSoundDesigner(sourceFile);
     layer = composition.layers.add(footage);
+    if (request.name) layer.name = request.name;
     layer.startTime = insertionTime;
     return {
       ok: true,

@@ -156,21 +156,23 @@
       </div>
     {:else}
       <div aria-label="Waveform view and operations" class="channel-labels" role="group">
-        <button
-          aria-label="Show mono waveform"
-          aria-pressed={effectiveChannelMode === "mono"}
-          class:is-active={effectiveChannelMode === "mono"}
-          onclick={(event) => { event.stopPropagation(); channelMode = "mono"; }}
-          type="button"
-        >Mono</button>
-        <button
-          aria-label={hasStereo ? "Show stereo waveform" : "Stereo is unavailable for this sound"}
-          aria-pressed={effectiveChannelMode === "stereo"}
-          class:is-active={effectiveChannelMode === "stereo"}
-          disabled={!hasStereo}
-          onclick={(event) => { event.stopPropagation(); channelMode = "stereo"; }}
-          type="button"
-        >Stereo</button>
+        <div aria-label="Channel view" class="channel-mode-controls" role="group">
+          <button
+            aria-label="Show mono waveform"
+            aria-pressed={effectiveChannelMode === "mono"}
+            class:is-active={effectiveChannelMode === "mono"}
+            onclick={(event) => { event.stopPropagation(); channelMode = "mono"; }}
+            type="button"
+          >Mono</button>
+          <button
+            aria-label={hasStereo ? "Show stereo waveform" : "Stereo is unavailable for this sound"}
+            aria-pressed={effectiveChannelMode === "stereo"}
+            class:is-active={effectiveChannelMode === "stereo"}
+            disabled={!hasStereo}
+            onclick={(event) => { event.stopPropagation(); channelMode = "stereo"; }}
+            type="button"
+          >Stereo</button>
+        </div>
         <button
           aria-label={reverseSelection ? "Reverse selected segment" : "Reverse sound"}
           aria-pressed={reversed || Boolean(reverseRange)}

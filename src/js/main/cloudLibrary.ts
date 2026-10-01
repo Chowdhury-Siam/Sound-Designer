@@ -3,6 +3,7 @@ import type { FreesoundSearchPage } from "./freesound";
 import type { FreesoundLicenseFilter, SoundFile } from "./types";
 
 export const CLOUD_ORIGIN = "https://aiscorpionsfx.com";
+const cloudPreviewCache = new Map<string, string>();
 export const isCloudSound = (sound: Pick<SoundFile, "source">) => sound.source === "scorpion" || sound.source === "freesound";
 export const isLibraryMediaUrl = (value: string) => {
   try { const url = new URL(value); return url.origin === CLOUD_ORIGIN && url.pathname === "/download.php" && !!url.searchParams.get("id"); } catch { return false; }
@@ -94,13 +95,17 @@ export const searchCloudLibrary = async (query: string, signal?: AbortSignal): P
 };
 
 export const resolveCloudPreview = async (sound: SoundFile, signal?: AbortSignal) => {
+  const cached = cloudPreviewCache.get(sound.sourceId || "");
+  if (cached) return cached;
   const response = await request(`/get_preview_url.php?id=${encodeURIComponent(sound.sourceId || "")}`, signal) as { preview_url?: unknown };
   if (typeof response.preview_url !== "string") throw new Error("This cloud preview is unavailable.");
   const url = new URL(response.preview_url);
   if (url.protocol !== "https:" || url.hostname !== "drive.google.com") throw new Error("Cloud library returned an invalid preview reference.");
   const id = url.searchParams.get("id");
   if (!id || !/^[\w-]+$/.test(id)) throw new Error("Cloud library returned an invalid preview reference.");
-  return `${CLOUD_ORIGIN}/download.php?id=${encodeURIComponent(id)}`;
+  const previewUrl = `${CLOUD_ORIGIN}/download.php?id=${encodeURIComponent(id)}`;
+  if (sound.sourceId) cloudPreviewCache.set(sound.sourceId, previewUrl);
+  return previewUrl;
 };
 
 export const resolveCloudDownload = async (sound: SoundFile, signal?: AbortSignal) => {

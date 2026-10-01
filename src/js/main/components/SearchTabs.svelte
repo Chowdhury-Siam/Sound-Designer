@@ -31,6 +31,6 @@
         {/if}
       </div>
     {/each}
+    <IconButton icon="add" label="Open a new search tab" onclick={onAdd} class="new-tab-button" />
   </div>
-  <IconButton icon="add" label="Open a new search tab" onclick={onAdd} class="new-tab-button" />
 </div>

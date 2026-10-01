@@ -191,15 +191,20 @@
 
 <section class="preview-pane">
   <div class="preview-heading">
-    <div class="preview-caption"><span class="eyebrow">Waveform</span></div>
+    <div class="preview-caption">
+      <span class="eyebrow">{selection ? "Selection" : "Waveform"}</span>
+      {#if selection}<strong>{formatPreciseTime(selectionDuration)}</strong>{/if}
+    </div>
     <div class="preview-tools">
       {#if selection}
         <span aria-live="polite" class="segment-readout">{formatPreciseTime(selection.start)}–{formatPreciseTime(selection.end)}</span>
-        <button class="segment-clear" onclick={() => onSelectionChange(null, true)} type="button">Clear</button>
+        <button aria-label="Clear selected segment" class="segment-clear" onclick={() => onSelectionChange(null, true)} type="button">Clear</button>
       {/if}
-      <span class="zoom-value">{zoom.toFixed(1)}×</span>
-      <IconButton icon="zoomOut" label="Zoom waveform out" onclick={onZoomOut} disabled={zoom <= 1} />
-      <IconButton icon="zoomIn" label="Zoom waveform in" onclick={onZoomIn} disabled={zoom >= 3} />
+      <div aria-label="Waveform zoom" class="waveform-zoom" role="group">
+        <IconButton icon="zoomOut" label="Zoom waveform out" onclick={onZoomOut} disabled={zoom <= 1} />
+        <span aria-live="polite" class="zoom-value">{zoom.toFixed(1)}×</span>
+        <IconButton icon="zoomIn" label="Zoom waveform in" onclick={onZoomIn} disabled={zoom >= 3} />
+      </div>
       <ToolbarPopover icon="more" label="Sound details">
         <div class="sound-details-popover">
           <strong>{sound?.name || "Nothing selected"}</strong>

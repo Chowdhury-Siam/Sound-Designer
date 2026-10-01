@@ -136,15 +136,19 @@ Local library + Freesound
 | **Adobe Premiere Pro** | 15.4 or newer |
 | **Adobe After Effects** | 18.4 or newer |
 | **Adobe extension runtime** | CEP 11 / Chromium 88 |
-| **Installer** | A CEP-compatible ZXP installer |
+| **Installer** | Windows setup EXE or macOS drag-install DMG |
 | **Internet** | Only for Freesound and update checks |
 
 ### Install
 
-1. Download the latest signed `.zxp` from [GitHub Releases](https://github.com/iboyshanto/SoundDesigner/releases/latest).
-2. Install it with a CEP-compatible ZXP installer.
-3. Restart Premiere Pro or After Effects if it was already open.
-4. Open **Window → Extensions** or **Window → Extensions (Legacy)** and choose **SoundDesigner**.
+Download the installer for your operating system from [GitHub Releases](https://github.com/iboyshanto/SoundDesigner/releases/latest):
+
+- **Windows:** run `SoundDesigner-vX.Y.Z-Windows-Setup.exe` and approve the administrator prompt. The setup app safely replaces an older installation.
+- **macOS:** open `SoundDesigner-vX.Y.Z-macOS.dmg`, then drag **SoundDesigner** onto **Adobe CEP Extensions**. Finder may request administrator access.
+
+Restart Premiere Pro or After Effects, then open **Window → Extensions** or **Window → Extensions (Legacy)** and choose **SoundDesigner**.
+
+Each installer has a matching `.sha256` file on the release page. The signed `.zxp` is also available as an advanced manual-install fallback.
 
 > [!TIP]
 > Save the Adobe project before using cloud audio, conversion, effects rendering, or segment export. SoundDesigner uses the project location to keep prepared media portable and organized.
@@ -317,7 +321,7 @@ Converted output is 24-bit PCM WAV with its sample rate and channel count preser
 
 The panel is built with **Svelte 5** and **Vite** through the **Bolt CEP** toolchain. Host integrations are compiled separately for ExtendScript/ES3 compatibility.
 
-**Requirements:** Bun 1.3+ and Node.js compatibility for CEP packaging and release utilities.
+**Requirements:** [Bun 1.3.14](https://bun.sh/) and Node.js compatibility for CEP packaging and release utilities.
 
 ```sh
 # Install the locked dependencies
@@ -339,6 +343,8 @@ bun run test:search-tabs
 bun run build
 ```
 
+`bun run dev` starts the browser development surface. To test Adobe host integration, build or symlink the CEP extension and open it inside a supported Premiere Pro or After Effects version.
+
 ### Project map
 
 | Path | Responsibility |
@@ -346,9 +352,9 @@ bun run build
 | `src/js/main` | Svelte UI, libraries, waveform, Freesound, conversion, and processing |
 | `src/jsx/ppro` | Premiere Pro host integration |
 | `src/jsx/aeft` | After Effects host integration |
-| `scripts` | Audio smoke tests, certificate creation, and release packaging |
+| `scripts` | Smoke tests, certificate creation, release packaging, and platform installer builders |
 | `cep.config.ts` | CEP hosts, runtime floor, manifest, and build configuration |
-| `.github/workflows/main.yml` | Tagged signed-ZXP release automation |
+| `.github/workflows/main.yml` | Tagged signed ZXP, EXE, and DMG release automation |
 
 ---
 
@@ -356,17 +362,35 @@ bun run build
 
 ## 📦 Publishing
 
-Production releases require a persistent publisher certificate.
+Production releases require a persistent publisher certificate. Keep both the certificate and its password secure; users need the same publisher identity for seamless updates.
 
 ```sh
 # Create a persistent local certificate once
 bun run certificate:create
 
-# Test, build, sign, and generate the SHA-256 checksum
+# Test, build, sign the ZXP, and generate its SHA-256 checksum
 bun run release:package
 ```
 
-GitHub Actions can publish tagged releases when `SOUNDDESIGNER_ZXP_CERT_BASE64` and `SOUNDDESIGNER_ZXP_PASSWORD` are configured as repository secrets. See [RELEASING.md](RELEASING.md) for the complete release checklist.
+The signed ZXP in `release/` is the input for both platform installers:
+
+```sh
+# Windows only: build the branded setup EXE
+bun run installer:windows
+
+# macOS only: build the branded drag-install DMG
+bun run installer:macos
+
+# Validate installer scripts, paths, and workflow wiring
+bun run test:installers
+```
+
+The EXE must be built on Windows and the DMG on macOS. Pushing a semantic version tag such as `v1.2.3` runs `.github/workflows/main.yml`, builds both installers and their SHA-256 files, and prepares a **draft** GitHub Release. The workflow requires these repository secrets:
+
+- `SOUNDDESIGNER_ZXP_CERT_BASE64` — the publisher `.p12` encoded as Base64.
+- `SOUNDDESIGNER_ZXP_PASSWORD` — the certificate password.
+
+Add matching release notes at `.github/releases/vX.Y.Z.md` before pushing the tag. Review and test the draft artifacts before publishing. See [RELEASING.md](RELEASING.md) for the complete release checklist.
 
 ---
 

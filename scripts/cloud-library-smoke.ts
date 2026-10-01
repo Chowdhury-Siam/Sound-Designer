@@ -19,8 +19,14 @@ assert.ok(requested.includes("water%20%26%20wind"));
 assert.equal(sounds.length, 1);
 assert.equal(sounds[0].source, "scorpion");
 assert.equal(sounds[0].previewUrl, undefined);
-globalThis.fetch = (async () => new Response(JSON.stringify({ preview_url: "https://drive.google.com/uc?export=download&id=preview_test", download_url: "https://drive.google.com/uc?export=download&id=full_test" }), { status: 200 })) as typeof fetch;
+let mediaRequests = 0;
+globalThis.fetch = (async () => {
+  mediaRequests += 1;
+  return new Response(JSON.stringify({ preview_url: "https://drive.google.com/uc?export=download&id=preview_test", download_url: "https://drive.google.com/uc?export=download&id=full_test" }), { status: 200 });
+}) as typeof fetch;
 assert.equal(await cloud.resolveCloudPreview(sounds[0]), "https://aiscorpionsfx.com/download.php?id=preview_test");
+assert.equal(await cloud.resolveCloudPreview(sounds[0]), "https://aiscorpionsfx.com/download.php?id=preview_test");
+assert.equal(mediaRequests, 1, "Resolved preview URLs should be cached");
 assert.equal(await cloud.resolveCloudDownload(sounds[0]), "https://aiscorpionsfx.com/download.php?id=full_test");
 globalThis.fetch = (async () => new Response(JSON.stringify({ download_url: "https://example.com/uc?id=bad" }), { status: 200 })) as typeof fetch;
 await assert.rejects(cloud.resolveCloudDownload(sounds[0]), /invalid download/);

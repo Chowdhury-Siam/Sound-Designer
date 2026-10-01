@@ -24,6 +24,14 @@ const TARGET_PEAK = Math.pow(10, -1 / 20);
 const RENDER_BUDGET_MS = 6;
 const CHECK_INTERVAL = 4096;
 
+export const normalizeTargetDb = (value: unknown = -1): number => {
+  const target = Number(value);
+  return Math.round(Math.max(-24, Math.min(0, Number.isFinite(target) ? target : -1)) * 2) / 2;
+};
+
+export const audioNormalizationKey = (normalization: AudioNormalization, targetDb = -1): string =>
+  normalization === "manual" ? `manual:${normalizeTargetDb(targetDb)}` : normalization;
+
 export const normalizeAudioProcessing = (value?: Partial<AudioProcessingSettings> | null): AudioProcessingSettings => ({
   bypass: value?.bypass === true,
   normalize: value?.normalize === true,
@@ -165,6 +173,7 @@ export const renderAudioProcessing = async (
   signal?: AbortSignal,
   frameStart = 0,
   frameEnd = audioBuffer.length,
+  normalizationTargetDb = -1,
 ): Promise<RenderedAudio> => {
   abortIfNeeded(signal);
   const settings = normalizeAudioProcessing(processing?.bypass ? DEFAULT_AUDIO_PROCESSING : processing);
@@ -216,7 +225,7 @@ export const renderAudioProcessing = async (
     channels = effected;
   }
   let peak = 0;
-  const normalizing = settings.normalize || normalization === "peak-minus-one";
+  const normalizing = settings.normalize || normalization !== "preserve";
   if (normalizing) {
     for (let channelIndex = 0; channelIndex < channels.length; channelIndex += 1) {
       const channel = channels[channelIndex];
@@ -226,7 +235,8 @@ export const renderAudioProcessing = async (
       }
     }
   }
-  const normalizationGain = normalizing && peak > 0 ? TARGET_PEAK / peak : 1;
+  const targetPeak = normalization === "manual" ? Math.pow(10, normalizeTargetDb(normalizationTargetDb) / 20) : TARGET_PEAK;
+  const normalizationGain = normalizing && peak > 0 ? targetPeak / peak : 1;
   const userGain = Math.pow(10, settings.gainDb / 20);
   const gain = normalizationGain * userGain;
   if (Math.abs(gain - 1) > 0.000001 || echo || reverb) {

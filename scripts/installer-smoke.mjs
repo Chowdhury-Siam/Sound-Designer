@@ -1,0 +1,34 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+const root = path.resolve(import.meta.dirname, "..");
+const read = (file) => readFileSync(path.join(root, file), "utf8");
+const packageJson = JSON.parse(read("package.json"));
+const workflow = read(".github/workflows/main.yml");
+const windowsBuilder = read("scripts/build-windows-installer.mjs");
+const windowsInstaller = read("scripts/windows-installer.cs");
+const macBuilder = read("scripts/build-macos-installer.mjs");
+const packager = read("scripts/package-release.mjs");
+
+assert.equal(packageJson.scripts["installer:windows"], "node scripts/build-windows-installer.mjs");
+assert.equal(packageJson.scripts["installer:macos"], "node scripts/build-macos-installer.mjs");
+assert.match(workflow, /runs-on: windows-latest/);
+assert.match(workflow, /runs-on: macos-latest/);
+assert.match(workflow, /bun run release:package && bun run installer:windows/);
+assert.match(workflow, /name: windows-release[\s\S]*path: release/);
+assert.match(workflow, /node scripts\/build-macos-installer\.mjs/);
+assert.match(workflow, /SoundDesigner-\*-Windows-Setup\.exe/);
+assert.match(workflow, /SoundDesigner-\*-macOS\.dmg/);
+assert.match(windowsBuilder, /SoundDesigner\.Extension\.zxp/);
+assert.match(windowsInstaller, /com\.rksound\.designer/);
+assert.match(windowsInstaller, /Path\.Combine\(common, "Adobe", "CEP", "extensions"\)/);
+assert.match(windowsInstaller, /Path\.Combine\("META-INF", "signatures\.xml"\)/);
+assert.match(macBuilder, /Adobe CEP Extensions/);
+assert.match(macBuilder, /\/Library\/Application Support\/Adobe\/CEP\/extensions/);
+assert.match(macBuilder, /\.VolumeIcon\.icns/);
+assert.match(macBuilder, /background\.png/);
+assert.match(macBuilder, /hdiutil/);
+assert.match(packager, /ZXPSignCmd/);
+
+console.log("Installer release wiring passed.");

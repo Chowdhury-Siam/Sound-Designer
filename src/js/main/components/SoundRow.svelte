@@ -93,7 +93,10 @@
   ondragend={(event) => { cancelScheduledDragPreparation(); onDragEnd(event); }}
   oncontextmenu={openContextMenu}
   onkeydown={(event) => {
-    if (event.key === "Enter") onSelect();
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onSelect();
+    }
   }}
   role="option"
   aria-selected={selected}

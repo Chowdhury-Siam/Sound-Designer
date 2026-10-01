@@ -118,16 +118,24 @@
     error = "";
     try {
       const prepared = new Map<string, SoundFile>();
+      const remoteSounds = Array.from(new Map(analysis.moments.flatMap((_, index) => {
+        const sound = availableSounds.find(item => item.id === selectedIds[index]);
+        return sound && !sound.path && !disabled[index] ? [[sound.id, sound] as const] : [];
+      })).values());
+      let nextRemote = 0;
+      await Promise.all(Array.from({ length: Math.min(3, remoteSounds.length) }, async () => {
+        while (nextRemote < remoteSounds.length) {
+          const sound = remoteSounds[nextRemote++];
+          const ready = await onPrepareRemote(sound);
+          if (!ready.path) throw new Error(`${sound.name} could not be prepared for After Effects.`);
+          prepared.set(sound.id, ready);
+        }
+      }));
       const placements = [];
       for (let index = 0; index < analysis.moments.length; index += 1) {
         const sound = availableSounds.find(item => item.id === selectedIds[index]);
         if (!sound || disabled[index]) continue;
-        let ready = prepared.get(sound.id);
-        if (!ready) {
-          ready = sound.path ? sound : await onPrepareRemote(sound);
-          if (!ready.path) throw new Error(`${sound.name} could not be prepared for After Effects.`);
-          prepared.set(sound.id, ready);
-        }
+        const ready = prepared.get(sound.id) || sound;
         placements.push({
           time: Math.max(0, analysis.moments[index].time + Number(offsetFrames || 0) * analysis.frameDuration),
           path: ready.path,
@@ -150,6 +158,9 @@
   $effect(() => {
     if (!open || !dialog) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const background = Array.from(document.querySelectorAll<HTMLElement>(".topbar, .panel-body, .transport-bar"));
+    const previousAriaHidden = background.map((element) => element.getAttribute("aria-hidden"));
+    background.forEach((element) => element.setAttribute("aria-hidden", "true"));
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); if (!busy) onClose(); return; }
       if (event.key !== "Tab") return;
@@ -160,7 +171,16 @@
     };
     window.addEventListener("keydown", onKey, true);
     window.setTimeout(() => dialog?.querySelector<HTMLElement>("button")?.focus(), 0);
-    return () => { stopPreview(); window.removeEventListener("keydown", onKey, true); previous?.focus(); };
+    return () => {
+      stopPreview();
+      window.removeEventListener("keydown", onKey, true);
+      background.forEach((element, index) => {
+        const value = previousAriaHidden[index];
+        if (value === null) element.removeAttribute("aria-hidden");
+        else element.setAttribute("aria-hidden", value);
+      });
+      previous?.focus();
+    };
   });
 </script>
 
@@ -172,54 +192,62 @@
         <button class="sfx-icon-button" type="button" aria-label="Close SFX Assistant" title="Close SFX Assistant" disabled={!!busy} onclick={onClose}><Icon name="close" size={15} /></button>
       </header>
       <div class="sheet-body sfx-sheet-body">
-        <section class="sfx-options" aria-label="Analysis options">
-          <label><span>Scope</span><select bind:value={scope} title="Choose which AE layers to analyze" onchange={() => analysis = null}><option value="selected">Selected layers</option><option value="comp">Entire composition</option><option value="workarea">Work area</option></select></label>
-          <label><span>Density</span><select bind:value={density} title="Choose how many motion moments to detect" onchange={() => analysis = null}><option value="sparse">Sparse</option><option value="balanced">Balanced</option><option value="detailed">Detailed</option></select></label>
-          <label><span>Style</span><select bind:value={style} title="Prefer matching sound names and tags" onchange={() => analysis = null}><option value="mixed">Mixed</option><option value="clean">Clean</option><option value="organic">Organic</option><option value="digital">Digital</option></select></label>
-          <label><span>Intensity</span><select bind:value={intensity} title="Prefer soft or strong sounds" onchange={() => analysis = null}><option value="soft">Soft</option><option value="medium">Medium</option><option value="strong">Strong</option></select></label>
-        </section>
-        <section class="sfx-types" aria-label="Sound types">
-          <span class="sfx-label">Sound types</span>
-          <div class="sfx-chips">
-            {#each ["click", "slide", "whoosh"] as kind}
-              <button class:is-active={kinds.includes(kind as SfxKind)} type="button" title={`Include ${kind} sounds`} aria-pressed={kinds.includes(kind as SfxKind)} onclick={() => toggleKind(kind as SfxKind)}>{kind}</button>
-            {/each}
+        <section class="sfx-setup" aria-labelledby="sfx-setup-title">
+          <div class="sfx-section-heading">
+            <span class="sfx-label" id="sfx-setup-title">Analysis setup</span>
+            <small>Choose how motion becomes sound cues</small>
+          </div>
+          <div class="sfx-options" aria-label="Analysis options">
+            <label><span>Scope</span><select bind:value={scope} title="Choose which AE layers to analyze" onchange={() => analysis = null}><option value="selected">Selected layers</option><option value="comp">Entire composition</option><option value="workarea">Work area</option></select></label>
+            <label><span>Density</span><select bind:value={density} title="Choose how many motion moments to detect" onchange={() => analysis = null}><option value="sparse">Sparse</option><option value="balanced">Balanced</option><option value="detailed">Detailed</option></select></label>
+            <label><span>Style</span><select bind:value={style} title="Prefer matching sound names and tags" onchange={() => analysis = null}><option value="mixed">Mixed</option><option value="clean">Clean</option><option value="organic">Organic</option><option value="digital">Digital</option></select></label>
+            <label><span>Intensity</span><select bind:value={intensity} title="Prefer soft or strong sounds" onchange={() => analysis = null}><option value="soft">Soft</option><option value="medium">Medium</option><option value="strong">Strong</option></select></label>
+          </div>
+          <div class="sfx-types" aria-label="Sound types">
+            <span class="sfx-label">Sound types</span>
+            <div class="sfx-chips">
+              {#each ["click", "slide", "whoosh"] as kind}
+                <button class:is-active={kinds.includes(kind as SfxKind)} type="button" title={`Include ${kind} sounds`} aria-pressed={kinds.includes(kind as SfxKind)} onclick={() => toggleKind(kind as SfxKind)}>{kind}</button>
+              {/each}
+            </div>
+          </div>
+          <div class="sfx-options sfx-timing" aria-label="Placement options">
+            <label><span>Offset · frames</span><input type="number" min="-120" max="120" step="1" bind:value={offsetFrames} title="Shift sound timing in frames" /></label>
+            <label><span>Gain · dB</span><input type="number" min="-48" max="12" step="1" bind:value={gainDb} title="Audio gain applied to added layers" /></label>
           </div>
         </section>
-        <section class="sfx-options sfx-timing" aria-label="Placement options">
-          <label><span>Offset · frames</span><input type="number" min="-120" max="120" step="1" bind:value={offsetFrames} title="Shift sound timing in frames" /></label>
-          <label><span>Gain · dB</span><input type="number" min="-48" max="12" step="1" bind:value={gainDb} title="Audio gain applied to added layers" /></label>
+        <section class="sfx-suggestions" aria-labelledby="sfx-suggestions-title">
+          <div class="sfx-analysis-heading"><span class="sfx-label" id="sfx-suggestions-title">Suggestions</span>{#if analysis}<small>{analysis.moments.length} moments · {analysis.analyzedLayers} layers</small>{/if}</div>
+          {#if error}<p class="sfx-error" role="alert">{error}</p>{/if}
+          {#if cloudNote}<p class="sfx-cloud-note" role="status">{cloudNote}</p>{/if}
+          {#if analysis?.moments.length}
+            <div class="sfx-moment-list">
+              {#each analysis.moments as moment, index}
+                {@const choices = choicesByMoment[index] || []}
+                {@const chosen = availableSounds.find(sound => sound.id === selectedIds[index])}
+                <article class:disabled={disabled[index]} class="sfx-moment">
+                  <input aria-label={`Include suggestion at ${moment.time.toFixed(2)} seconds`} type="checkbox" checked={!disabled[index]} onchange={(event) => disabled[index] = !event.currentTarget.checked} />
+                  <div class="sfx-moment-main">
+                    <div class="sfx-moment-title"><b>{moment.time.toFixed(2)}s</b><span>{moment.type}</span><small title={moment.reason}>{moment.layer}</small></div>
+                    {#if choices.length}
+                      <div class="sfx-moment-choice">
+                        <select aria-label={`Sound for ${moment.type} at ${moment.time.toFixed(2)} seconds`} title="Replace suggested sound" value={selectedIds[index] || ""} onchange={(event) => selectedIds[index] = event.currentTarget.value || null}>
+                          <option value="">Skip sound</option>
+                          {#if chosen && !choices.some(choice => choice.id === chosen.id)}<option value={chosen.id}>{chosen.source === "scorpion" ? "☁ " : ""}{chosen.name}</option>{/if}
+                          {#each choices as choice}<option value={choice.id}>{choice.source === "scorpion" ? "☁ " : ""}{choice.name}</option>{/each}
+                        </select>
+                        {#if chosen?.source === "scorpion"}<span class="sfx-cloud-indicator" title="Cloud sound"><Icon name="cloud" size={14} /></span>{/if}
+                        <button class="sfx-icon-button" type="button" title={previewId === selectedIds[index] ? "Stop preview" : "Preview selected sound"} aria-label={`Preview sound for ${moment.type}`} disabled={!selectedIds[index]} onclick={() => { const sound = availableSounds.find(item => item.id === selectedIds[index]); if (sound) preview(sound); }}><Icon name={previewId === selectedIds[index] ? "stop" : "play"} size={14} /></button>
+                      </div>
+                    {:else}<small class="sfx-no-match">No indexed {moment.type} sounds. Import a matching folder or disable this moment.</small>{/if}
+                  </div>
+                </article>
+              {/each}
+            </div>
+          {:else if !analysis && !error}
+            <div class="sfx-empty"><span class="sfx-empty-icon"><Icon name="waveform" size={18} /></span><div><strong>Ready to analyze</strong><small>Scan the active composition to preview sound placements.</small></div></div>
+          {/if}
         </section>
-        <div class="sfx-analysis-heading"><span class="sfx-label">Suggestions</span>{#if analysis}<small>{analysis.moments.length} moments · {analysis.analyzedLayers} layers</small>{/if}</div>
-        {#if error}<p class="sfx-error" role="alert">{error}</p>{/if}
-        {#if cloudNote}<p class="sfx-cloud-note" role="status">{cloudNote}</p>{/if}
-        {#if analysis?.moments.length}
-          <div class="sfx-moment-list">
-            {#each analysis.moments as moment, index}
-              {@const choices = choicesByMoment[index] || []}
-              {@const chosen = availableSounds.find(sound => sound.id === selectedIds[index])}
-              <article class:disabled={disabled[index]} class="sfx-moment">
-                <input aria-label={`Include suggestion at ${moment.time.toFixed(2)} seconds`} type="checkbox" checked={!disabled[index]} onchange={(event) => disabled[index] = !event.currentTarget.checked} />
-                <div class="sfx-moment-main">
-                  <div class="sfx-moment-title"><b>{moment.time.toFixed(2)}s</b><span>{moment.type}</span><small title={moment.reason}>{moment.layer}</small></div>
-                  {#if choices.length}
-                    <div class="sfx-moment-choice">
-                      <select aria-label={`Sound for ${moment.type} at ${moment.time.toFixed(2)} seconds`} title="Replace suggested sound" value={selectedIds[index] || ""} onchange={(event) => selectedIds[index] = event.currentTarget.value || null}>
-                        <option value="">Skip sound</option>
-                        {#if chosen && !choices.some(choice => choice.id === chosen.id)}<option value={chosen.id}>{chosen.source === "scorpion" ? "☁ " : ""}{chosen.name}</option>{/if}
-                        {#each choices as choice}<option value={choice.id}>{choice.source === "scorpion" ? "☁ " : ""}{choice.name}</option>{/each}
-                      </select>
-                      {#if chosen?.source === "scorpion"}<span class="sfx-cloud-indicator" title="Cloud sound"><Icon name="cloud" size={14} /></span>{/if}
-                      <button class="sfx-icon-button" type="button" title={previewId === selectedIds[index] ? "Stop preview" : "Preview selected sound"} aria-label={`Preview sound for ${moment.type}`} disabled={!selectedIds[index]} onclick={() => { const sound = availableSounds.find(item => item.id === selectedIds[index]); if (sound) preview(sound); }}><Icon name={previewId === selectedIds[index] ? "stop" : "play"} size={14} /></button>
-                    </div>
-                  {:else}<small class="sfx-no-match">No indexed {moment.type} sounds. Import a matching folder or disable this moment.</small>{/if}
-                </div>
-              </article>
-            {/each}
-          </div>
-        {:else if !analysis && !error}
-          <p class="sfx-empty"><Icon name="waveform" size={18} /> Analyze an AE composition to preview sound placements.</p>
-        {/if}
       </div>
       <footer class="sheet-footer sfx-sheet-footer">
         <button class="ghost-button" type="button" disabled={!!busy || !kinds.length} onclick={analyze}>{busy === "analyzing" ? "Analyzing…" : "Analyze"}</button>

@@ -34,6 +34,15 @@ try {
   }
   await page.setViewportSize({width:800,height:475});
   const waveform = page.locator(".channel-range-target");
+  await page.getByRole("button", {name:"Stop and return to start"}).click();
+  await waveform.focus();
+  for (let step = 0; step < 95; step += 1) await page.keyboard.press("ArrowRight");
+  const loopButton = page.getByRole("button", {name:"Loop preview"});
+  if (await loopButton.getAttribute("aria-pressed") !== "true") await loopButton.click();
+  await page.getByRole("button", {name:"Play preview"}).click();
+  await page.waitForTimeout(1600);
+  assert.equal(await page.getByRole("button", {name:"Pause preview"}).count(), 1, "Full audio keeps playing after the loop boundary");
+  await page.getByRole("button", {name:"Stop and return to start"}).click();
   const range = await waveform.boundingBox();
   await page.mouse.move(range.x + range.width * .2, range.y + range.height / 2);
   await page.mouse.down();
