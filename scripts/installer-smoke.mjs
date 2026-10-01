@@ -15,6 +15,9 @@ assert.equal(packageJson.scripts["installer:windows"], "node scripts/build-windo
 assert.equal(packageJson.scripts["installer:macos"], "node scripts/build-macos-installer.mjs");
 assert.match(workflow, /runs-on: windows-latest/);
 assert.match(workflow, /runs-on: macos-latest/);
+assert.match(workflow, /branches:\s+- main/);
+assert.match(workflow, /startsWith\(github\.event\.head_commit\.message, '🚀 RELEASE v'\)/);
+assert.match(workflow, /tag_name: \$\{\{ needs\.release-info\.outputs\.tag \}\}/);
 assert.match(workflow, /bun run release:package && bun run installer:windows/);
 assert.match(workflow, /name: windows-release[\s\S]*path: release/);
 assert.match(workflow, /node scripts\/build-macos-installer\.mjs/);

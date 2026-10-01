@@ -2,6 +2,8 @@ name: Signed Installer Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*.*.*"
 
@@ -9,7 +11,25 @@ permissions:
   contents: write
 
 jobs:
+  release-info:
+    if: github.ref_type == 'tag' || startsWith(github.event.head_commit.message, '🚀 RELEASE v')
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        shell: bash
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          if [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" != "$tag" ]]; then
+            echo "Tag ${{ github.ref_name }} does not match package version $tag." >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   windows-installer:
+    needs: release-info
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +46,7 @@ jobs:
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\sounddesigner-publisher.p12", [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
       - name: Build signed extension and Windows installer
         env:
-          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REF_NAME: ${{ needs.release-info.outputs.tag }}
           SOUNDDESIGNER_ZXP_CERT: ${{ runner.temp }}\sounddesigner-publisher.p12
           SOUNDDESIGNER_ZXP_PASSWORD: ${{ secrets.SOUNDDESIGNER_ZXP_PASSWORD }}
         run: bun run release:package && bun run installer:windows
@@ -58,7 +78,7 @@ jobs:
             release/SoundDesigner-*-macOS.dmg.sha256
 
   publish-release:
-    needs: [windows-installer, macos-installer]
+    needs: [release-info, windows-installer, macos-installer]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,9 +89,11 @@ jobs:
       - name: Prepare GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: SoundDesigner ${{ github.ref_name }}
+          name: SoundDesigner ${{ needs.release-info.outputs.tag }}
+          tag_name: ${{ needs.release-info.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           draft: true
-          body_path: .github/releases/${{ github.ref_name }}.md
+          body_path: .github/releases/${{ needs.release-info.outputs.tag }}.md
           files: |
             release-artifacts/*
             .github/assets/SoundDesigner-v*.png
