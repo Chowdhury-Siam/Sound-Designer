@@ -7,8 +7,10 @@ import { parseFrameRate, timecodeToFrames } from "../../shared/timecode";
 type NativeProxy = any;
 
 export interface WorkflowIntegrationModule {
-  InitializePromise(pluginId: string): Promise<boolean>;
-  GetResolvePromise(): Promise<NativeProxy> | NativeProxy;
+  InitializePromise?(pluginId: string): Promise<boolean>;
+  GetResolvePromise?(): Promise<NativeProxy> | NativeProxy;
+  Initialize?(pluginId: string): boolean;
+  GetResolve?(): NativeProxy;
   CleanUp(): boolean;
   SetAPITimeout?(seconds: number): boolean;
   GetInfo?(): { version?: string };
@@ -105,10 +107,15 @@ export class NativeResolveHost implements ResolveHostAdapter {
 
   async initialize(): Promise<void> {
     if (this.initialized && this.resolve) return;
-    const initialized = await this.workflow.InitializePromise(this.pluginId);
+    const initialize: ((pluginId: string) => boolean | Promise<boolean>) | undefined = this.workflow.InitializePromise ?? this.workflow.Initialize;
+    const getResolve = this.workflow.GetResolvePromise ?? this.workflow.GetResolve;
+    if (typeof initialize !== "function" || typeof getResolve !== "function") {
+      throw new ResolveHostError("INCOMPATIBLE_NATIVE_MODULE", "The installed Resolve module does not provide a supported scripting interface. Reinstall SoundDesigner with a compatible WorkflowIntegration module.");
+    }
+    const initialized = await initialize.call(this.workflow, this.pluginId);
     if (!initialized) throw new ResolveHostError("RESOLVE_INITIALIZATION_FAILED", "Resolve rejected the Workflow Integration initialization.");
     this.workflow.SetAPITimeout?.(20);
-    const resolve = await this.workflow.GetResolvePromise();
+    const resolve = await getResolve.call(this.workflow);
     if (!resolve) throw new ResolveHostError("RESOLVE_UNAVAILABLE", "Resolve did not provide a scripting interface.");
     this.resolve = resolve;
     this.initialized = true;

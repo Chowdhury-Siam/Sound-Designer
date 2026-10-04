@@ -31,7 +31,7 @@ const wavFixture = async (): Promise<string> => {
   return file;
 };
 
-const createMock = () => {
+const createMock = (synchronous = false) => {
   let initialized = false;
   const workflowCalls: string[] = [];
   let projectId = "project-1";
@@ -163,6 +163,19 @@ const createMock = () => {
     },
     CleanUp: () => true,
   };
+  if (synchronous) {
+    workflow.Initialize = () => {
+      workflowCalls.push("initialize");
+      initialized = true;
+      return true;
+    };
+    workflow.GetResolve = () => {
+      workflowCalls.push("resolve");
+      return resolve;
+    };
+    delete workflow.InitializePromise;
+    delete workflow.GetResolvePromise;
+  }
   return {
     workflow,
     mediaPool,
@@ -182,6 +195,18 @@ const createMock = () => {
 };
 
 describe("Resolve host adapter", () => {
+  test("imports and inserts with a native module that only exposes synchronous APIs", async () => {
+    const mock = createMock(true);
+    const file = await wavFixture();
+    const host = new NativeResolveHost(mock.workflow, "com.sound.designer.resolve");
+    const imported = await host.importPreparedAudio({ path: file, sourceId: "fixture", displayName: "fixture.wav" });
+    expect(imported.existing).toBe(false);
+    const inserted = await host.insertAtPlayhead({ preparedPath: file, displayName: "fixture.wav", channelMode: "stereo" });
+    expect(inserted.timelineItemCount).toBe(1);
+    expect(mock.importedClips).toHaveLength(1);
+    expect(mock.workflowCalls).toEqual(["initialize", "timeout", "resolve"]);
+  });
+
   test("initializes before configuring the native API timeout", async () => {
     const mock = createMock();
     const host = new NativeResolveHost(mock.workflow, "com.sound.designer.resolve");
