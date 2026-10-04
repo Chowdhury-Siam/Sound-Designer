@@ -13,6 +13,118 @@ const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
 describe("Adobe portable storage", () => {
+  test("cancelled or invalid folder selection preserves mode and library state", async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-folder-guards-"));
+    roots.push(fixture);
+    const pointer = path.join(fixture, "app-data");
+    const root = path.join(fixture, "central");
+    const adobe = new AdobeStorageService(pointer, root);
+    await adobe.initialize();
+    await adobe.saveLibrary({ keep: true });
+    const resolve = new StorageService(pointer, root);
+    await resolve.initialize(root);
+    const cep = (window as any).cep;
+    const previousFs = cep.fs;
+    try {
+      cep.fs = { showOpenDialog: () => ({ data: [] }) };
+      expect(await adobe.changeLocation()).toBeNull();
+      for (const candidate of ["relative-folder", path.join(pointer, "audio")]) {
+        cep.fs = { showOpenDialog: () => ({ data: [candidate] }) };
+        await expect(adobe.changeLocation()).rejects.toThrow();
+        await expect(resolve.changeRoot(candidate)).rejects.toThrow();
+      }
+      const invalid = path.join(fixture, "invalid");
+      await mkdir(invalid);
+      await writeFile(path.join(invalid, "sounddesigner.json"), "{broken");
+      cep.fs = { showOpenDialog: () => ({ data: [invalid] }) };
+      await expect(adobe.changeLocation()).rejects.toThrow("no valid backup");
+      await expect(resolve.changeRoot(invalid)).rejects.toThrow("no valid backup");
+      expect(adobe.info.audioStorageMode).toBe("project");
+      expect(resolve.root).toBe(root);
+      expect(await adobe.getLibrary()).toEqual({ keep: true });
+      expect(await resolve.readLibrary()).toEqual({ keep: true });
+    } finally { cep.fs = previousFs; }
+  });
+
+  test("a lost central pointer does not silently switch Adobe back to project storage", async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-lost-pointer-"));
+    roots.push(fixture);
+    const pointer = path.join(fixture, "app-data");
+    const root = path.join(fixture, "central");
+    await new StorageService(pointer, root).initialize(root);
+    const adobe = new AdobeStorageService(pointer, root);
+    await adobe.initialize();
+    await adobe.setAudioStorageMode("central");
+    await rm(path.join(pointer, "storage-location.json"));
+    expect((await adobe.initialize()).audioStorageMode).toBe("central");
+    await expect(adobe.getProjectRoot({ ok: true, host: "premiere", projectPath: path.join(fixture, "Film.prproj"), projectDirectory: fixture, projectName: "Film", message: "ready" })).rejects.toThrow("Choose a central audio folder");
+  });
+
+  test("defaults Adobe to beside project when Resolve configured the central folder first", async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-resolve-first-"));
+    roots.push(fixture);
+    const pointer = path.join(fixture, "app-data");
+    const root = path.join(fixture, "central");
+    await new StorageService(pointer, root).initialize(root);
+    const adobe = new AdobeStorageService(pointer, root);
+    expect((await adobe.initialize()).audioStorageMode).toBe("project");
+    expect(adobe.info.root).toBe(root);
+    await adobe.setAudioStorageMode("central");
+    expect((await new AdobeStorageService(pointer, root).initialize()).audioStorageMode).toBe("central");
+  });
+
+  test("rejects corrupt legacy settings instead of silently creating empty state", async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-corrupt-upgrade-"));
+    roots.push(fixture);
+    const pointer = path.join(fixture, "app-data");
+    const root = path.join(fixture, "central");
+    await mkdir(pointer);
+    await mkdir(root);
+    await writeFile(path.join(pointer, "storage-location.json"), JSON.stringify({ version: 1, root }));
+    await writeFile(path.join(root, "sounddesigner.json"), "{broken");
+    await expect(new AdobeStorageService(pointer, root).initialize()).rejects.toThrow("no valid backup");
+    await expect(new StorageService(pointer, root).initialize()).rejects.toThrow("no valid backup");
+    expect(await readFile(path.join(pointer, "sounddesigner.json")).catch(() => null)).toBeNull();
+    expect(await readFile(path.join(root, "sounddesigner.json"), "utf8")).toBe("{broken");
+  });
+
+  test("recovers legacy settings from a valid older backup without changing source files", async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-backup-upgrade-"));
+    roots.push(fixture);
+    const root = path.join(fixture, "central");
+    await mkdir(path.join(root, "Backups"), { recursive: true });
+    const original = JSON.stringify({ version: 2, createdAt: "2026-01-01", library: { keep: true } });
+    await writeFile(path.join(root, "sounddesigner.json"), "{broken");
+    await writeFile(path.join(root, "Backups", "sounddesigner-100-1.json"), original);
+    await writeFile(path.join(root, "Backups", "sounddesigner-200-1.json"), "{broken-newest");
+    const adobePointer = path.join(fixture, "adobe-data");
+    await mkdir(adobePointer);
+    await writeFile(path.join(adobePointer, "storage-location.json"), JSON.stringify({ version: 1, root }));
+    const adobe = new AdobeStorageService(adobePointer, root);
+    await adobe.initialize();
+    expect(await adobe.getLibrary()).toEqual({ keep: true });
+    const resolve = new StorageService(path.join(fixture, "resolve-data"), root);
+    await resolve.initialize(root);
+    expect(await resolve.readLibrary()).toEqual({ keep: true });
+    expect(await readFile(path.join(root, "sounddesigner.json"), "utf8")).toBe("{broken");
+    expect(await readFile(path.join(root, "Backups", "sounddesigner-100-1.json"), "utf8")).toBe(original);
+  });
+
+  test("simultaneous first launch cannot overwrite another host's newly saved library", async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-first-launch-"));
+    roots.push(fixture);
+    const pointer = path.join(fixture, "app-data");
+    const root = path.join(fixture, "central");
+    const resolve = new StorageService(pointer, root);
+    const adobe = new AdobeStorageService(pointer, root);
+    await Promise.all([
+      resolve.initialize(root).then(() => resolve.writeLibrary({ keep: true })),
+      adobe.initialize(),
+    ]);
+    expect(await adobe.getLibrary()).toEqual({ keep: true });
+    expect(await resolve.readLibrary()).toEqual({ keep: true });
+  });
+
   test("selects literal percent-named folders without URL-decoding native paths", async () => {
     const pointer = await mkdtemp(path.join(tmpdir(), "sounddesigner-pointer-"));
     const root = await mkdtemp(path.join(tmpdir(), "sounddesigner-100%20%-"));
@@ -75,35 +187,64 @@ describe("Adobe portable storage", () => {
       resolve.writeLibrary({ folders: ["shared"] }),
     ]);
 
-    const manifest = JSON.parse(await readFile(path.join(root, "sounddesigner.json"), "utf8"));
+    const manifest = JSON.parse(await readFile(path.join(pointer, "sounddesigner.json"), "utf8"));
     expect(manifest.preferences.normalizationTargetDb).toBe(-6);
     expect(manifest.library.folders).toEqual(["shared"]);
     expect(JSON.stringify(manifest)).not.toContain("freesoundApiKey");
   });
 
-  test("imports only the current Adobe project, verifies copies, and remains idempotent", async () => {
-    const pointer = await mkdtemp(path.join(tmpdir(), "sounddesigner-pointer-"));
-    const root = await mkdtemp(path.join(tmpdir(), "sounddesigner-root-"));
-    const projectDirectory = await mkdtemp(path.join(tmpdir(), "sounddesigner-project-"));
-    roots.push(pointer, root, projectDirectory);
-    await writeFile(path.join(pointer, "storage-location.json"), JSON.stringify({ version: 1, root }));
-    const legacy = path.join(projectDirectory, "SoundDesigner", "同じ名前", "Segments", "legacy.wav");
-    await mkdir(path.dirname(legacy), { recursive: true });
-    const original = Buffer.from([0, 1, 2, 3, 254, 255]);
-    await writeFile(legacy, original);
+  test("defaults to the v1.0.3 project layout without central setup and preserves files on mode changes", async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-adobe-modes-"));
+    roots.push(fixture);
+    const pointer = path.join(fixture, "app-data");
+    const root = path.join(fixture, "central");
+    const projectDirectory = path.join(fixture, "work");
+    await mkdir(projectDirectory);
     const adobe = new AdobeStorageService(pointer, root);
+    expect((await adobe.initialize()).audioStorageMode).toBe("project");
+    expect(adobe.info.root).toBe("");
+    await adobe.saveLibrary({ keep: true });
+    const project = { ok: true as const, host: "premiere" as const, projectPath: path.join(projectDirectory, "Film.prproj"), projectDirectory, projectName: "Film", message: "ready" };
+    const beside = await adobe.getProjectRoot(project);
+    expect(beside).toBe(path.join(projectDirectory, "SoundDesigner", "Film"));
+    const original = path.join(beside, "Segments", "old.wav");
+    await writeFile(original, Buffer.from([0, 1, 254, 255]));
+    await expect(adobe.getProjectRoot({ ok: false, host: "premiere", message: "Save the project" })).rejects.toThrow("Save the project");
+    const cep = (window as any).cep;
+    const previousFs = cep.fs;
+    cep.fs = { showOpenDialog: () => ({ data: [root] }) };
+    try { await adobe.changeLocation(); } finally { cep.fs = previousFs; }
+    await adobe.setAudioStorageMode("central");
+    const central = await adobe.getProjectRoot(project);
+    expect(central.startsWith(path.join(root, "Projects", "adobe"))).toBe(true);
+    expect(await readFile(path.join(central, "Segments", "old.wav")).catch(() => null)).toBeNull();
+    expect(await adobe.getLibrary()).toEqual({ keep: true });
+    await adobe.setAudioStorageMode("project");
+    expect(await adobe.getProjectRoot(project)).toBe(beside);
+    expect(await readFile(original)).toEqual(Buffer.from([0, 1, 254, 255]));
+    const reopened = new AdobeStorageService(pointer, root);
+    expect((await reopened.initialize()).audioStorageMode).toBe("project");
     await new StorageService(pointer, root).initialize(root);
+    expect((await reopened.initialize()).audioStorageMode).toBe("project");
+  });
+
+  test("preserves existing central installations and imports their settings once", async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-adobe-upgrade-"));
+    roots.push(fixture);
+    const pointer = path.join(fixture, "app-data");
+    const root = path.join(fixture, "central");
+    await mkdir(pointer);
+    await mkdir(root);
+    await writeFile(path.join(pointer, "storage-location.json"), JSON.stringify({ version: 1, root }));
+    const original = JSON.stringify({ version: 2, createdAt: "2026-01-01", library: { preserved: true } });
+    await writeFile(path.join(root, "sounddesigner.json"), original);
+    await new StorageService(pointer, root).initialize();
+    const adobe = new AdobeStorageService(pointer, root);
+    expect((await adobe.initialize()).audioStorageMode).toBe("central");
+    expect(await adobe.getLibrary()).toEqual({ preserved: true });
+    await adobe.saveLibrary({ updated: true });
+    expect(await readFile(path.join(root, "sounddesigner.json"), "utf8")).toBe(original);
     await adobe.initialize();
-    const project = { ok: true as const, host: "premiere" as const, projectPath: path.join(projectDirectory, "同じ名前.prproj"), projectDirectory, projectName: "同じ名前", message: "ready" };
-
-    const first = await adobe.getProjectRoot(project);
-    const second = await adobe.getProjectRoot(project);
-
-    expect(second).toBe(first);
-    expect(await readFile(path.join(first, "Segments", "legacy.wav"))).toEqual(original);
-    expect(await readFile(legacy)).toEqual(original);
-    const manifest = JSON.parse(await readFile(path.join(root, "sounddesigner.json"), "utf8"));
-    expect(Object.keys(manifest.migrations)).toHaveLength(1);
-    expect(Object.keys(manifest.projects)).toHaveLength(1);
+    expect(await adobe.getLibrary()).toEqual({ updated: true });
   });
 });

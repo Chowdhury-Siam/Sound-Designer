@@ -837,23 +837,31 @@ import { isCloudSound } from "./cloudLibrary";
       if (!result.ok) { notify("error", result.error.message); return; }
       if (!result.data) { notify("info", "Storage location was not changed."); return; }
       storageInfo = result.data;
-      portablePreferencesReady = false;
-      const stored = await platform().storage.getPreferences();
-      if (stored.ok && stored.data) applyPortablePreferences(stored.data);
-      await loadPortableLibraryMetadata();
-      collections = loadFavoriteCollections();
-      savedCloudFavorites = loadCloudFavorites();
-      if (platform().capabilities.nativeLibrary) {
-        const library = await platform().library.getSnapshot();
-        if (library.ok) applyNativeLibrarySnapshot(library.data);
-        else notify("warning", library.error.message);
-      }
-      portablePreferencesReady = true;
-      if (stored.ok && !stored.data) await platform().storage.savePreferences(portablePreferences());
-      notify("success", "SoundDesigner storage location updated.");
+      preparedSegmentCache.clear();
+      preparedProcessingCache.clear();
+      invalidatePreparedSegment();
+      notify("success", "Central audio folder updated. Existing files stay in place.");
     } finally {
       storageBusy = false;
     }
+  };
+
+  const changeAudioStorageMode = async (mode: "project" | "central") => {
+    const setMode = platform().storage.setAudioStorageMode;
+    if (storageBusy || !setMode) return;
+    if (mode === "central" && !storageInfo?.root) {
+      await changeStorageLocation();
+      if (!storageInfo?.root) return;
+    }
+    storageBusy = true;
+    try {
+      const result = await setMode(mode);
+      if (!result.ok) { notify("error", result.error.message); return; }
+      storageInfo = result.data;
+      preparedSegmentCache.clear();
+      preparedProcessingCache.clear();
+      invalidatePreparedSegment();
+    } finally { storageBusy = false; }
   };
 
   const openUpdate = () => {
@@ -2874,6 +2882,9 @@ import { isCloudSound } from "./cloudLibrary";
     onCheckUpdate={refreshUpdates}
     onOpenUpdate={openUpdate}
     onChangeStorage={changeStorageLocation}
+    audioStorageMode={storageInfo?.audioStorageMode || "central"}
+    projectStorageAvailable={platform().mode === "adobe"}
+    onAudioStorageMode={changeAudioStorageMode}
     onClose={() => settingsOpen = false}
     onDelete={deleteSettingsFolder}
   />

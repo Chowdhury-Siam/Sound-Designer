@@ -287,7 +287,9 @@ const projectDirectories = async (project: HostProjectContext) => {
   const portableRoot = await platform().storage.getProjectRoot(project);
   if (!portableRoot.ok) throw new Error(portableRoot.error.message);
   const root = portableRoot.data;
-  const originals = path.join(root, "Downloads");
+  const besideProjectRoot = path.join(project.projectDirectory, "SoundDesigner", safeName(project.projectName, "Adobe Project"));
+  const originals = path.relative(besideProjectRoot, root) === ""
+    ? path.join(root, "Freesound", "Originals") : path.join(root, "Downloads");
   const converted = path.join(root, "Converted");
   const processed = path.join(root, "Processed");
   const segments = path.join(root, "Segments");

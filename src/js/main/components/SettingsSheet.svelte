@@ -12,6 +12,7 @@
 
   let {
     open, folder, autoPreview, loop, insertionTarget, conversionPolicy, normalization, normalizationTargetDb, freesoundLibraryEnabled, freesoundApiKey, freesoundLicenseFilter, storagePath, storageAvailable, storageBusy,
+    audioStorageMode, projectStorageAvailable, onAudioStorageMode,
     update, onAutoPreview, onLoop, onInsertionTarget, onConversionPolicy, onNormalization, onNormalizationTargetDb, onFreesoundApiKey,
     onFreesoundLibraryEnabled, onFreesoundLicenseFilter, onOpenFreesoundSetup, onOpenFreesoundTerms, onBrowseFreesound, onCheckUpdate, onOpenUpdate, onChangeStorage, onClose, onDelete,
   }: {
@@ -29,6 +30,9 @@
     storagePath: string;
     storageAvailable: boolean;
     storageBusy: boolean;
+    audioStorageMode: "project" | "central";
+    projectStorageAvailable: boolean;
+    onAudioStorageMode: (mode: "project" | "central") => void;
     update: UpdateState;
     onAutoPreview: (value: boolean) => void;
     onLoop: (value: boolean) => void;
@@ -147,12 +151,24 @@
         {/if}
         {#if storageAvailable}
           <div class="settings-group">
-            <span class="field-label">Storage location</span>
-            <div class="path-field"><Icon name="folder" /><code>{storagePath || "No portable folder selected"}</code></div>
+            <span class="field-label">Audio storage</span>
+            <div class="choice-list" role="radiogroup" aria-label="Audio storage">
+              <label class="choice-row" class:storage-disabled={!projectStorageAvailable}>
+                <input checked={audioStorageMode === "project"} disabled={!projectStorageAvailable || storageBusy} name="audio-storage" onclick={(event) => { event.preventDefault(); onAudioStorageMode("project"); }} type="radio" />
+                <span><strong>Beside project</strong><small>{projectStorageAvailable ? "Keep audio in a SoundDesigner folder beside your saved project." : "DaVinci Resolve requires a central audio folder."}</small></span>
+              </label>
+              <label class="choice-row">
+                <input checked={audioStorageMode === "central"} disabled={storageBusy} name="audio-storage" onclick={(event) => { event.preventDefault(); onAudioStorageMode("central"); }} type="radio" />
+                <span><strong>Central folder</strong><small>Keep audio for all projects in one chosen SoundDesigner folder.</small></span>
+              </label>
+            </div>
+            {#if audioStorageMode === "central"}
+            <div class="path-field"><Icon name="folder" /><code>{storagePath || "No central folder selected"}</code></div>
             <div class="settings-inline-action">
-              <p>Downloads, prepared audio, segments, metadata, and shared preferences use this folder. Changing it copies data first and never deletes the previous folder.</p>
               <button class="ghost-button" disabled={storageBusy} onclick={onChangeStorage} type="button">{storageBusy ? "Changing…" : "Change folder"}</button>
             </div>
+            {/if}
+            <p>Applies to new files. Existing files stay in their current location. Settings and library records are saved automatically on this computer.</p>
           </div>
         {/if}
         <div class="settings-group">

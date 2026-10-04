@@ -29,7 +29,8 @@ export type PlatformPreparedAudioWrite = {
 
 export type PlatformDragAudio = { path: string; sourceId: string; displayName: string; projectPath?: string };
 
-export type PlatformStorageInfo = { root: string; manifestPath: string };
+export type AudioStorageMode = "project" | "central";
+export type PlatformStorageInfo = { root: string; manifestPath: string; audioStorageMode?: AudioStorageMode };
 export type PlatformPortablePreferences = {
   autoPreview: boolean;
   loop: boolean;
@@ -73,6 +74,7 @@ export interface SoundDesignerPlatform {
     getLibraryMetadata(): Promise<PlatformResult<unknown | null>>;
     saveLibraryMetadata(value: unknown): Promise<PlatformResult<{ saved: true }>>;
     changeLocation(): Promise<PlatformResult<PlatformStorageInfo | null>>;
+    setAudioStorageMode?(mode: AudioStorageMode): Promise<PlatformResult<PlatformStorageInfo>>;
     getProjectRoot(project: HostProjectContext): Promise<PlatformResult<string>>;
   };
   library: {

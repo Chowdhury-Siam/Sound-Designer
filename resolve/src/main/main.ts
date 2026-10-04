@@ -168,8 +168,8 @@ const initializeStorage = async (): Promise<boolean> => {
   const choice = await dialog.showMessageBox({
     type: "question",
     title: "Choose SoundDesigner storage",
-    message: "Where should SoundDesigner save downloads, converted audio, processed audio, segments, metadata, and library settings?",
-    detail: `Use the default Documents folder or select an existing SoundDesigner folder to restore it.\n\nDefault: ${path.join(app.getPath("documents"), "SoundDesigner")}`,
+    message: "Where should SoundDesigner save project audio?",
+    detail: `DaVinci Resolve requires a central audio folder. Settings and library records are saved automatically on this computer.\n\nDefault: ${path.join(app.getPath("documents"), "SoundDesigner")}`,
     buttons: ["Use default folder", "Choose folder", "Cancel"],
     defaultId: 0,
     cancelId: 2,

@@ -31,7 +31,7 @@ describe("portable storage", () => {
     await storage.writeLibrary({ keepCurrent: true });
     await new StorageService(pointer, sharedRoot, legacy).initialize();
     expect(await storage.readLibrary()).toEqual({ keepCurrent: true });
-    await storage.changeRoot(sharedRoot, false);
+    await storage.changeRoot(sharedRoot);
     await storage.writeLibrary({ shared: true });
     const reopened = new StorageService(pointer, oldRoot, legacy);
     await reopened.initialize();
@@ -41,7 +41,7 @@ describe("portable storage", () => {
     expect(await readFile(path.join(legacy, "library-index.json"), "utf8")).toBe(oldIndex);
   });
 
-  test("keeps library and preferences in one manifest and copies safely", async () => {
+  test("keeps library and preferences in application data when the audio destination changes", async () => {
     const pointer = await mkdtemp(path.join(tmpdir(), "sounddesigner-pointer-"));
     const first = await mkdtemp(path.join(tmpdir(), "sounddesigner-root-"));
     const second = await mkdtemp(path.join(tmpdir(), "sounddesigner-root-"));
@@ -50,21 +50,21 @@ describe("portable storage", () => {
     await storage.initialize(first);
     await storage.writeLibrary({ version: 1, snapshot: { folders: [], sounds: [], updatedAt: 0 } });
     await storage.writePreferences({ autoPreview: true });
-    await storage.changeRoot(second, true);
+    await storage.changeRoot(second);
 
-    const manifest = JSON.parse(await readFile(path.join(second, "sounddesigner.json"), "utf8"));
+    const manifest = JSON.parse(await readFile(path.join(pointer, "sounddesigner.json"), "utf8"));
     expect(manifest.library.version).toBe(1);
     expect(manifest.preferences.autoPreview).toBe(true);
     expect(storage.root).toBe(second);
   });
 
-  test("migrates v1 in place without discarding data", async () => {
+  test("imports v1 into application data without changing the original manifest", async () => {
     const pointer = await mkdtemp(path.join(tmpdir(), "sounddesigner-pointer-"));
     const root = await mkdtemp(path.join(tmpdir(), "sounddesigner-root-"));
     roots.push(pointer, root);
     await writeFile(path.join(root, "sounddesigner.json"), JSON.stringify({ version: 1, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", library: { keep: true } }));
     await new StorageService(pointer, root).initialize(root);
-    const manifest = JSON.parse(await readFile(path.join(root, "sounddesigner.json"), "utf8"));
+    const manifest = JSON.parse(await readFile(path.join(pointer, "sounddesigner.json"), "utf8"));
     expect(manifest.version).toBe(2);
     expect(manifest.library.keep).toBe(true);
     expect(manifest.hostPreferences).toEqual({});
@@ -79,7 +79,7 @@ describe("portable storage", () => {
     await adobe.initialize(root);
     await resolve.initialize(root);
     await Promise.all([adobe.writePreferences({ fromAdobe: true }), resolve.writeLibraryMetadata({ fromResolve: true })]);
-    const manifest = JSON.parse(await readFile(path.join(root, "sounddesigner.json"), "utf8"));
+    const manifest = JSON.parse(await readFile(path.join(pointer, "sounddesigner.json"), "utf8"));
     expect(manifest.preferences.fromAdobe).toBe(true);
     expect(manifest.libraryMetadata.fromResolve).toBe(true);
   });
@@ -91,12 +91,12 @@ describe("portable storage", () => {
     const storage = new StorageService(pointer, root);
     await storage.initialize(root);
     await storage.writePreferences({ preserved: true });
-    const lock = path.join(root, ".sounddesigner.lock");
+    const lock = path.join(pointer, ".sounddesigner.lock");
     await writeFile(lock, "stale");
     const old = new Date(Date.now() - 60_000);
     await utimes(lock, old, old);
     await storage.writeLibraryMetadata({ afterStaleLock: true });
-    await writeFile(path.join(root, "sounddesigner.json"), "{broken");
+    await writeFile(path.join(pointer, "sounddesigner.json"), "{broken");
     const recovered = new StorageService(pointer, root);
     await recovered.initialize(root);
     expect(await recovered.readPreferences<{ preserved: boolean }>()).toEqual({ preserved: true });
@@ -108,33 +108,32 @@ describe("portable storage", () => {
     roots.push(pointer, root);
     const storage = new StorageService(pointer, root);
     await storage.initialize(root);
-    const lock = path.join(root, ".sounddesigner.lock");
+    const lock = path.join(pointer, ".sounddesigner.lock");
     await writeFile(lock, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }));
     await expect(storage.writePreferences({ blocked: true })).rejects.toThrow("busy in another host");
     expect(await readFile(lock, "utf8")).toContain(String(process.pid));
   }, 15_000);
 
-  test("resumes an interrupted verified copy and preserves Unicode source bytes", async () => {
-    const pointer = await mkdtemp(path.join(tmpdir(), "sounddesigner-pointer-"));
-    const first = await mkdtemp(path.join(tmpdir(), "sounddesigner-root-"));
-    const second = await mkdtemp(path.join(tmpdir(), "sounddesigner-root-"));
-    roots.push(pointer, first, second);
+  test("switches future audio without copying existing media or adopting destination settings", async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-switch-"));
+    roots.push(fixture);
+    const pointer = path.join(fixture, "app-data");
+    const first = path.join(fixture, "first");
+    const second = path.join(fixture, "second");
     const storage = new StorageService(pointer, first);
     await storage.initialize(first);
-    const relative = path.join("Projects", "resolve", "同じ名前--stable-id", "Metadata", `${"long-name-".repeat(10)}記録.json`);
-    const source = path.join(first, relative);
-    const destination = path.join(second, relative);
-    await mkdir(path.dirname(source), { recursive: true });
-    await mkdir(path.dirname(destination), { recursive: true });
-    const original = Buffer.from("preserve these original bytes \u2603", "utf8");
-    await writeFile(source, original);
-    await writeFile(destination, original);
-    await writeFile(path.join(second, ".sounddesigner-copy.json"), JSON.stringify({ version: 1, source: first }));
-
-    await storage.changeRoot(second, true);
-
-    expect(await readFile(source)).toEqual(original);
-    expect(await readFile(destination)).toEqual(original);
-    expect(storage.root).toBe(second);
+    await storage.writePreferences({ keep: true });
+    const source = path.join(first, "old.wav");
+    await writeFile(source, Buffer.from([0, 1, 254, 255]));
+    await mkdir(second);
+    await writeFile(path.join(second, "sounddesigner.json"), JSON.stringify({ version: 2, createdAt: "2026-01-01", preferences: { keep: false } }));
+    await storage.changeRoot(second);
+    expect(await storage.readPreferences()).toEqual({ keep: true });
+    expect(await readFile(source)).toEqual(Buffer.from([0, 1, 254, 255]));
+    expect(await readFile(path.join(second, "old.wav")).catch(() => null)).toBeNull();
+    const reopened = new StorageService(pointer, first);
+    await reopened.initialize();
+    expect(reopened.root).toBe(second);
+    expect(await reopened.readPreferences()).toEqual({ keep: true });
   });
 });

@@ -2,7 +2,7 @@ import { crypto, fs, path } from "../../lib/cep/node";
 import { nativePathKey } from "../../platform/nativePaths";
 import { normalizeDialogPath } from "../../main/library";
 import type { HostProjectContext } from "../../main/types";
-import type { PlatformPortablePreferences, PlatformStorageInfo } from "../../platform/types";
+import type { AudioStorageMode, PlatformPortablePreferences, PlatformStorageInfo } from "../../platform/types";
 
 type Manifest = {
   version: 2;
@@ -27,24 +27,33 @@ const processId = () => typeof process !== "undefined" ? process.pid : 0;
 
 export class AdobeStorageService {
   private root = "";
+  private audioStorageMode: AudioStorageMode = "project";
   private writes: Promise<void> = Promise.resolve();
 
   constructor(private readonly pointerDirectory: string, private readonly defaultRoot: string) {}
 
   get info(): PlatformStorageInfo {
-    if (!this.root) throw new Error("SoundDesigner storage has not been selected.");
-    return { root: this.root, manifestPath: path.join(this.root, MANIFEST) };
+    return { root: this.root, manifestPath: path.join(this.pointerDirectory, MANIFEST), audioStorageMode: this.audioStorageMode };
   }
 
   async initialize(): Promise<PlatformStorageInfo> {
     const pointer = this.readJson(path.join(this.pointerDirectory, "storage-location.json"));
-    if (!isObject(pointer) || typeof pointer.root !== "string" || !path.isAbsolute(pointer.root)) {
-      const error = new Error("Choose a SoundDesigner storage folder before using portable storage.");
-      (error as Error & { code?: string }).code = "STORAGE_NOT_CONFIGURED";
-      throw error;
-    }
-    this.root = path.resolve(pointer.root);
-    this.ensureManifest();
+    this.root = isObject(pointer) && typeof pointer.root === "string" && path.isAbsolute(pointer.root) ? path.resolve(pointer.root) : "";
+    const audioSettings = this.readJson(path.join(this.pointerDirectory, "adobe-audio-storage.json"));
+    this.audioStorageMode = isObject(audioSettings) && audioSettings.mode === "project" ? "project"
+      : isObject(audioSettings) && audioSettings.mode === "central" ? "central"
+      : this.root && isObject(pointer) && pointer.audioStorageVersion !== 1 ? "central" : "project";
+    await this.ensureManifest();
+    // Preserve the upgrade default even if Resolve later configures the shared pointer.
+    if (!isObject(audioSettings)) await this.setAudioStorageMode(this.audioStorageMode);
+    return this.info;
+  }
+
+  async setAudioStorageMode(mode: AudioStorageMode): Promise<PlatformStorageInfo> {
+    if (mode !== "project" && mode !== "central") throw new Error("Invalid audio storage mode.");
+    if (mode === "central" && !this.root) throw new Error("Choose a central audio folder first.");
+    this.writeJson(path.join(this.pointerDirectory, "adobe-audio-storage.json"), { version: 1, mode });
+    this.audioStorageMode = mode;
     return this.info;
   }
 
@@ -52,25 +61,30 @@ export class AdobeStorageService {
     const showDialog = window.cep.fs.showOpenDialogEx || window.cep.fs.showOpenDialog;
     const result = showDialog(false, true, "Choose or create a SoundDesigner storage folder", this.root || this.defaultRoot) as { data?: string[] };
     if (!result.data?.length) return null;
-    const selected = path.resolve(normalizeDialogPath(result.data[0]));
+    const dialogPath = normalizeDialogPath(result.data[0]);
+    if (!path.isAbsolute(dialogPath)) throw new Error("The central audio folder must be an absolute path.");
+    const selected = path.resolve(dialogPath);
     if (this.root && selected === this.root) return this.info;
     if (this.root) {
       const relative = path.relative(this.root, selected);
       if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) throw new Error("Choose a folder outside the current SoundDesigner storage folder.");
     }
+    const dataRelative = path.relative(this.pointerDirectory, selected);
+    if (!dataRelative || (!dataRelative.startsWith("..") && !path.isAbsolute(dataRelative))) throw new Error("Choose a folder outside SoundDesigner application data.");
     fs.mkdirSync(selected, { recursive: true });
     const entries = fs.readdirSync(selected);
     const hasManifest = fs.existsSync(path.join(selected, MANIFEST));
     if (!hasManifest && entries.length) throw new Error("Choose an empty folder or an existing SoundDesigner folder.");
-    if (hasManifest && !window.confirm("Use the library, settings, and project records already stored in this folder? The current folder will remain unchanged.")) return null;
-    if (this.root && !hasManifest && !window.confirm("Copy current SoundDesigner data to this folder and switch after verification? The old folder will not be deleted.")) return null;
-    if (this.root && !hasManifest) this.copyTreeVerified(this.root, selected, new Set([LOCK]));
+    await this.writes;
     const previous = this.root;
     this.root = selected;
     try {
-      this.ensureManifest();
+      if (!hasManifest) {
+        const now = new Date().toISOString();
+        this.writeJson(path.join(selected, MANIFEST), { version: 2, createdAt: now, updatedAt: now, hostPreferences: {}, projects: {}, migrations: {} });
+      } else this.readManifest(selected, false);
       fs.mkdirSync(this.pointerDirectory, { recursive: true });
-      this.writeJson(path.join(this.pointerDirectory, "storage-location.json"), { version: 1, root: this.root });
+      await this.withLock(async () => this.writeJson(path.join(this.pointerDirectory, "storage-location.json"), { version: 1, root: this.root, audioStorageVersion: 1 }));
       return this.info;
     } catch (error) {
       this.root = previous;
@@ -104,57 +118,51 @@ export class AdobeStorageService {
 
   async getProjectRoot(project: HostProjectContext): Promise<string> {
     if (!project.ok || !project.projectPath || !project.projectDirectory || !project.projectName) throw new Error(project.message || "Save the Adobe project before preparing audio.");
+    if (this.audioStorageMode === "central" && !this.root) throw new Error("Choose a central audio folder in Settings before preparing audio.");
     const projectPath = nativePathKey(path.resolve(project.projectPath), path.sep === "\\");
     const normalizedPath = path.sep === "\\" ? projectPath.replace(/\\/g, "/") : projectPath;
     const projectId = crypto.createHash("sha256").update(normalizedPath).digest("hex").slice(0, 16);
-    const relativeRoot = path.join("Projects", "adobe", `${cleanName(project.projectName)}--${projectId}`);
-    const projectRoot = path.join(this.info.root, relativeRoot);
-    for (const directory of DIRECTORIES) fs.mkdirSync(path.join(projectRoot, directory), { recursive: true });
-
-    const migrationId = `adobe-legacy:${projectId}`;
-    const legacyRoot = path.join(project.projectDirectory, "SoundDesigner", cleanName(project.projectName));
-    await this.updateManifest((manifest) => {
-      if (!manifest.migrations[migrationId] && fs.existsSync(legacyRoot)) {
-        const mappings: Array<[string, string]> = [
-          [path.join(legacyRoot, "Freesound", "Originals"), path.join(projectRoot, "Downloads")],
-          [path.join(legacyRoot, "Converted"), path.join(projectRoot, "Converted")],
-          [path.join(legacyRoot, "Segments"), path.join(projectRoot, "Segments")],
-          [path.join(legacyRoot, "Metadata"), path.join(projectRoot, "Metadata")],
-        ];
-        for (const [source, destination] of mappings) if (fs.existsSync(source)) this.copyTreeVerified(source, destination);
-        manifest.migrations[migrationId] = { source: legacyRoot, destination: relativeRoot, completedAt: new Date().toISOString(), sourcePreserved: true };
-      }
-      manifest.projects[`adobe:${projectId}`] = { id: projectId, name: project.projectName, path: normalizedPath, root: relativeRoot, updatedAt: new Date().toISOString() };
-    });
+    const projectRoot = this.audioStorageMode === "project"
+      ? path.join(project.projectDirectory, "SoundDesigner", cleanName(project.projectName))
+      : path.join(this.root, "Projects", "adobe", `${cleanName(project.projectName)}--${projectId}`);
+    for (const directory of DIRECTORIES) {
+      const relative = directory === "Downloads" && this.audioStorageMode === "project" ? path.join("Freesound", "Originals") : directory;
+      fs.mkdirSync(path.join(projectRoot, relative), { recursive: true });
+    }
     return projectRoot;
   }
 
-  private ensureManifest() {
-    fs.mkdirSync(this.root, { recursive: true });
-    fs.mkdirSync(path.join(this.root, "Backups"), { recursive: true });
-    if (!fs.existsSync(this.info.manifestPath)) {
-      const now = new Date().toISOString();
-      this.writeJson(this.info.manifestPath, { version: 2, createdAt: now, updatedAt: now, hostPreferences: {}, projects: {}, migrations: {} });
-      return;
-    }
-    this.readManifest();
+  private async ensureManifest() {
+    fs.mkdirSync(this.pointerDirectory, { recursive: true });
+    fs.mkdirSync(path.join(this.pointerDirectory, "Backups"), { recursive: true });
+    await this.withLock(async () => {
+      if (!fs.existsSync(this.info.manifestPath)) {
+        const now = new Date().toISOString();
+        const previous = this.root && fs.existsSync(path.join(this.root, MANIFEST)) ? this.readManifest(this.root, false) : null;
+        const manifest = previous || { version: 2, createdAt: now, updatedAt: now, hostPreferences: {}, projects: {}, migrations: {} };
+        this.writeJson(this.info.manifestPath, manifest);
+        return;
+      }
+      this.readManifest();
+    });
   }
 
-  private readManifest(): Manifest {
-    try { return this.parseManifest(this.readJson(this.info.manifestPath)); }
+  private readManifest(directory = this.pointerDirectory, restore = true): Manifest {
+    const manifestPath = path.join(directory, MANIFEST);
+    try { return this.parseManifest(this.readJson(manifestPath)); }
     catch (_error) {
-      const backupDirectory = path.join(this.root, "Backups");
+      const backupDirectory = path.join(directory, "Backups");
       const backups = fs.existsSync(backupDirectory)
         ? fs.readdirSync(backupDirectory).filter((entry) => /^sounddesigner-\d+-\d+\.json$/.test(entry)).sort().reverse()
         : [];
       for (const backup of backups) {
         try {
           const recovered = this.parseManifest(this.readJson(path.join(backupDirectory, backup)));
-          this.writeJson(this.info.manifestPath, recovered);
+          if (restore) this.writeJson(manifestPath, recovered);
           return recovered;
         } catch (_backupError) {}
       }
-      throw new Error(`The selected SoundDesigner folder has an invalid ${MANIFEST} file and no valid backup.`);
+      throw new Error(`SoundDesigner has an invalid manifest at ${manifestPath} and no valid backup.`);
     }
   }
 
@@ -176,7 +184,7 @@ export class AdobeStorageService {
       const manifest = this.readManifest();
       change(manifest);
       manifest.updatedAt = new Date().toISOString();
-      const backup = path.join(this.root, "Backups", `sounddesigner-${Date.now()}-${processId()}.json`);
+      const backup = path.join(this.pointerDirectory, "Backups", `sounddesigner-${Date.now()}-${processId()}.json`);
       fs.copyFileSync(this.info.manifestPath, backup, fs.constants.COPYFILE_EXCL);
       this.writeJson(this.info.manifestPath, manifest);
     }));
@@ -185,7 +193,7 @@ export class AdobeStorageService {
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
-    const lockPath = path.join(this.root, LOCK);
+    const lockPath = path.join(this.pointerDirectory, LOCK);
     for (let attempt = 0; attempt < 60; attempt += 1) {
       let descriptor: number | undefined;
       try {
@@ -210,22 +218,6 @@ export class AdobeStorageService {
       }
     }
     throw new Error("SoundDesigner storage is busy in another host. Try again shortly.");
-  }
-
-  private copyTreeVerified(source: string, destination: string, excluded = new Set<string>()) {
-    fs.mkdirSync(destination, { recursive: true });
-    for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
-      if (excluded.has(entry.name)) continue;
-      const from = path.join(source, entry.name);
-      const to = path.join(destination, entry.name);
-      if (entry.isDirectory()) this.copyTreeVerified(from, to, excluded);
-      else {
-        if (!fs.existsSync(to)) fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL);
-        const sourceHash = crypto.createHash("sha256").update(fs.readFileSync(from)).digest("hex");
-        const targetHash = crypto.createHash("sha256").update(fs.readFileSync(to)).digest("hex");
-        if (sourceHash !== targetHash) throw new Error(`Storage copy verification failed for ${entry.name}.`);
-      }
-    }
   }
 
   private readJson(filePath: string): unknown {

@@ -104,7 +104,7 @@ Local library + Freesound
   <tr>
     <td width="50%" valign="top">
       <h3>🗂️ Project-Smart Organization</h3>
-       <p>Prepared audio is stored under your selected portable SoundDesigner folder, scoped to the active project. Imported media stays grouped in a dedicated SoundDesigner bin.</p>
+       <p>Prepared audio is stored beside the Adobe project or in your chosen central SoundDesigner folder, scoped to the active project. Imported media stays grouped in a dedicated SoundDesigner bin.</p>
     </td>
     <td width="50%" valign="top">
       <h3>📐 Built for Dockable Panels</h3>
@@ -159,15 +159,15 @@ For the Resolve candidate, restart **Resolve Studio** and open **Workspace → W
 
 This capture renders the current Windows Forms source without installing software. It does not certify elevation, DPI, accessibility or native payload operation. Native macOS Customize/receipt screenshots are **BLOCKED** until a Mac candidate is built and tested; no simulated Mac screenshot is presented as evidence.
 
-### Shared storage onboarding and migration
+### Audio storage and migration
 
-1. On first launch, choose an empty writable folder or adopt an existing SoundDesigner folder. Select the **same folder** in Adobe and Resolve to share libraries, favorites, labels, collections and portable settings.
-2. Use **Settings → Storage** to change it. A new empty destination receives a verified copy before the pointer switches. The old folder is retained; adopting an existing folder uses its settings/data.
-3. The version-2 `sounddesigner.json` manifest is protected by the same cross-host lock. If it is corrupt, a valid manifest backup can be recovered. A live lock is never stolen; interrupted-copy/retained-backup errors require review.
-4. Legacy Adobe project media is copied and hash-verified on demand for that saved project, leaving original data intact. Legacy Resolve pointer/index/memories are imported without overwriting an existing shared root. Do not delete legacy folders during candidate testing.
-5. Credentials are outside this portable root. The shared Freesound key is machine-local at `%APPDATA%\\SoundDesigner\\credentials.json` on Windows or `~/Library/Application Support/SoundDesigner/credentials.json` on macOS. Existing per-host keys migrate on opening the updated host; an existing shared key wins. Open updated Resolve first to migrate a key previously entered there, then Adobe. Clearing it is shared. The file is plaintext with user-level access; it is not an encrypted OS vault.
+1. **Settings → Audio storage** offers **Beside project** and **Central folder**. New Adobe installations default to Beside project, using the v1.0.3 layout. Existing central installations keep their destination until you switch. Resolve requires Central folder; Beside project is disabled there.
+2. Switching modes or changing the central folder applies to new files. Existing media stays in place, preserving timeline references. Choose an empty writable folder or an existing SoundDesigner folder for central audio.
+3. Settings, libraries, favorites, labels and collections are saved automatically in the machine-local SoundDesigner application-data directory, independently of the audio destination. The version-2 `sounddesigner.json` manifest retains cross-host locking and backups. Existing central settings are imported once without changing the source. The Adobe audio mode is saved separately so Resolve cannot overwrite it.
+4. Beside project reuses `SoundDesigner/<Project name>/` beside the saved Adobe project. Legacy project audio is not copied or moved automatically. Legacy Resolve pointer/index/memories continue to be imported. Keep legacy folders during candidate testing.
+5. The shared Freesound key is machine-local at `%APPDATA%\SoundDesigner\credentials.json` on Windows or `~/Library/Application Support/SoundDesigner/credentials.json` on macOS. Existing per-host keys migrate on opening the updated host; an existing shared key wins. Open updated Resolve first to migrate a key previously entered there, then Adobe. Clearing it is shared. The file is plaintext with user-level access; it is not an encrypted OS vault.
 
-Unavailable/read-only volumes, concurrent native-host use and external-volume permissions still require the manual acceptance matrix. Setup never migrates or deletes portable media or credentials.
+Unavailable/read-only volumes, concurrent native-host use and external-volume permissions still require the manual acceptance matrix. Setup never moves or deletes existing media or credentials.
 
 > [!TIP]
 > Save the Adobe project before using cloud audio, conversion, effects rendering, or segment export. SoundDesigner uses the project location to keep prepared media portable and organized.
@@ -280,7 +280,19 @@ Treat the key like a password:
 
 ## 🗂️ Project Audio and Conversion
 
-Directly supported local audio can be inserted from its original location. Downloads, converted/processed audio and segments use the selected portable storage root:
+Directly supported local audio can be inserted from its original location. With **Beside project**, Adobe uses:
+
+```text
+<Project directory>/SoundDesigner/<Project name>/
+├── Freesound/Originals/
+├── Converted/
+├── Processed/
+├── Segments/
+├── Waveforms/
+└── Metadata/
+```
+
+With **Central folder**, both hosts use:
 
 ```text
 <Selected SoundDesigner root>/
@@ -296,7 +308,7 @@ Directly supported local audio can be inserted from its original location. Downl
 
 | Folder | Purpose |
 | --- | --- |
-| `Downloads` | Provider audio downloaded only when needed |
+| `Downloads` / `Freesound/Originals` | Provider audio downloaded only when needed |
 | `Converted` | Adobe-compatible, normalized, or effect-processed WAV files |
 | `Processed` / `Waveforms` | Processed output and reusable waveform data |
 | `Segments` | Rendered waveform selections |
@@ -333,7 +345,7 @@ Converted output is 24-bit PCM WAV with its sample rate and channel count preser
 | **Enable Freesound library** | Adds or removes the optional cloud source |
 | **License filter** | Restricts Freesound searches to the chosen license group |
 | **Updates** | Checks stable GitHub Releases without installing silently |
-| **Storage** | Adopts or copies to another shared portable storage folder |
+| **Audio storage** | Chooses Beside project (Adobe) or Central folder; changes apply to new files |
 
 ---
 
@@ -434,7 +446,7 @@ Enable **Freesound library** in Settings, enter a valid personal API key, save, 
 <details>
 <summary><strong>The API key or shared settings differ between Adobe and Resolve</strong></summary>
 
-Open the updated host containing the old key first, then switch focus to the other updated host. Keys share the machine-local store; portable settings require both hosts to select the same portable folder. A credential-store read/write error is shown instead of silently overwriting it. Do not paste keys into reports or screenshots.
+Open the updated host containing the old key first, then switch focus to the other updated host. Keys share the machine-local store; settings and library records share the machine-local application-data store independently of the audio folder. A credential-store read/write error is shown instead of silently overwriting it. Do not paste keys into reports or screenshots.
 </details>
 
 <details>

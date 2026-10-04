@@ -1,7 +1,5 @@
 import path from "node:path";
-import { createReadStream } from "node:fs";
-import { createHash } from "node:crypto";
-import { cp, copyFile, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { ResolveHostError } from "./resolveHost";
 
 type Manifest = {
@@ -26,7 +24,6 @@ const manifestName = "sounddesigner.json";
 const lockName = ".sounddesigner.lock";
 const lockStaleMs = 30_000;
 const lockAttempts = 60;
-const copyMarkerName = ".sounddesigner-copy.json";
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -47,7 +44,7 @@ export class StorageService {
   }
 
   get info(): StorageInfo {
-    return { root: this.root, manifestPath: path.join(this.root, manifestName) };
+    return { root: this.root, manifestPath: path.join(this.pointerDirectory, manifestName) };
   }
 
   private get pointerPath(): string {
@@ -73,6 +70,7 @@ export class StorageService {
     const configuredRoot = initialRoot || await this.configuredRoot(this.pointerDirectory) || legacyRoot;
     this.selectedRoot = path.resolve(configuredRoot || this.defaultRoot);
     await this.ensureManifest();
+    await this.ensureAudioRoot();
     if (this.legacyPointerDirectory && this.root === path.resolve(legacyRoot || this.defaultRoot) && await this.readLibrary() === undefined) {
       let legacy: unknown;
       try { legacy = JSON.parse(await readFile(path.join(this.legacyPointerDirectory, "library-index.json"), "utf8")); } catch { /* No legacy index. */ }
@@ -115,9 +113,9 @@ export class StorageService {
     await this.updateManifest((manifest) => { manifest.libraryMetadata = value; });
   }
 
-  async changeRoot(nextRoot: string, copyCurrent: boolean): Promise<StorageInfo> {
+  async changeRoot(nextRoot: string): Promise<StorageInfo> {
+    if (!path.isAbsolute(nextRoot)) throw new ResolveHostError("INVALID_STORAGE_PATH", "The storage location must be an absolute folder path.");
     const resolved = path.resolve(nextRoot);
-    if (!path.isAbsolute(resolved)) throw new ResolveHostError("INVALID_STORAGE_PATH", "The storage location must be an absolute folder path.");
     if (resolved === this.root) return this.info;
     const relative = path.relative(this.root, resolved);
     if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) {
@@ -125,24 +123,16 @@ export class StorageService {
     }
 
     await this.writes;
+    const dataRelative = path.relative(this.pointerDirectory, resolved);
+    if (!dataRelative || (!dataRelative.startsWith("..") && !path.isAbsolute(dataRelative))) throw new ResolveHostError("INVALID_STORAGE_PATH", "Choose a folder outside SoundDesigner application data.");
     await mkdir(resolved, { recursive: true });
-    if (copyCurrent) {
-      const entries = await readdir(resolved);
-      const markerPath = path.join(resolved, copyMarkerName);
-      const marker = await readFile(markerPath, "utf8").then((value) => JSON.parse(value) as { source?: unknown }).catch(() => null);
-      if (entries.length && marker?.source !== this.root) throw new ResolveHostError("STORAGE_FOLDER_NOT_EMPTY", "Choose an empty folder, an existing SoundDesigner folder, or the interrupted copy destination.");
-      if (!marker) await this.writeJson(markerPath, { version: 1, source: this.root, startedAt: new Date().toISOString() });
-      for (const entry of await readdir(this.root, { withFileTypes: true })) {
-        if (entry.name === lockName) continue;
-        await this.copyVerified(path.join(this.root, entry.name), path.join(resolved, entry.name));
-      }
-      await rm(markerPath, { force: true });
-    }
+    if ((await readdir(resolved)).length && !await this.hasManifest(resolved)) throw new ResolveHostError("STORAGE_FOLDER_NOT_EMPTY", "Choose an empty folder or an existing SoundDesigner folder.");
+    if (await this.hasManifest(resolved)) await this.readManifest(resolved, false);
 
     const previousRoot = this.selectedRoot;
     this.selectedRoot = resolved;
     try {
-      await this.ensureManifest();
+      await this.ensureAudioRoot();
       await this.savePointer();
       return this.info;
     } catch (error) {
@@ -153,52 +143,73 @@ export class StorageService {
 
   private async savePointer(): Promise<void> {
     await mkdir(this.pointerDirectory, { recursive: true });
-    await this.writeJson(this.pointerPath, { version: 1, root: this.root });
+    await this.withLock(async () => {
+      const existingRoot = await this.configuredRoot(this.pointerDirectory);
+      let audioStorageVersion = 1;
+      if (existingRoot) {
+        const pointer = JSON.parse(await readFile(this.pointerPath, "utf8")) as { audioStorageVersion?: number };
+        // Keep old Adobe defaults when Resolve opens first during an upgrade.
+        audioStorageVersion = pointer.audioStorageVersion === 1 ? 1 : 0;
+      }
+      await this.writeJson(this.pointerPath, { version: 1, root: this.root, audioStorageVersion });
+    });
   }
 
   private async ensureManifest(): Promise<void> {
-    await mkdir(this.root, { recursive: true });
-    await mkdir(path.join(this.root, "Backups"), { recursive: true });
-    const existing = await stat(this.info.manifestPath).catch(() => null);
-    if (existing?.isFile()) {
-      let raw: Record<string, unknown>;
-      try {
-        raw = JSON.parse(await readFile(this.info.manifestPath, "utf8")) as Record<string, unknown>;
-      } catch {
-        await this.readManifest();
+    await mkdir(this.pointerDirectory, { recursive: true });
+    await mkdir(path.join(this.pointerDirectory, "Backups"), { recursive: true });
+    await this.withLock(async () => {
+      const existing = await stat(this.info.manifestPath).catch(() => null);
+      if (existing?.isFile()) {
+        const manifest = await this.readManifest();
+        const raw = JSON.parse(await readFile(this.info.manifestPath, "utf8")) as Record<string, unknown>;
+        if (raw.version !== 2) await this.writeJson(this.info.manifestPath, manifest);
         return;
       }
-      const manifest = this.parseManifest(raw);
-      if (raw.version !== 2) await this.withLock(() => this.writeJson(this.info.manifestPath, manifest));
-      return;
-    }
-    const now = new Date().toISOString();
-    const manifest: Manifest = { version: 2, createdAt: now, updatedAt: now, hostPreferences: {}, projects: {}, migrations: {} };
-    const legacyPath = path.join(this.pointerDirectory, "library-index.json");
-    try {
-      const legacy = JSON.parse(await readFile(legacyPath, "utf8"));
-      if (isObject(legacy)) manifest.library = legacy;
-    } catch {
-      // No legacy library index to import.
-    }
-    await this.writeJson(this.info.manifestPath, manifest);
+      const now = new Date().toISOString();
+      const manifest: Manifest = { version: 2, createdAt: now, updatedAt: now, hostPreferences: {}, projects: {}, migrations: {} };
+      const previousPath = path.join(this.root, manifestName);
+      if (previousPath !== this.info.manifestPath && await this.hasManifest(this.root)) {
+        const previous = await this.readManifest(this.root, false);
+        await this.writeJson(this.info.manifestPath, previous);
+        return;
+      }
+      const legacyPath = path.join(this.pointerDirectory, "library-index.json");
+      try {
+        const legacy = JSON.parse(await readFile(legacyPath, "utf8"));
+        if (isObject(legacy)) manifest.library = legacy;
+      } catch {
+        // No legacy library index to import.
+      }
+      await this.writeJson(this.info.manifestPath, manifest);
+    });
   }
 
-  private async readManifest(): Promise<Manifest> {
+  private async ensureAudioRoot(): Promise<void> {
+    await mkdir(this.root, { recursive: true });
+    const mediaManifest = path.join(this.root, manifestName);
+    if (!await this.hasManifest(this.root)) {
+      const now = new Date().toISOString();
+      await this.writeJson(mediaManifest, { version: 2, createdAt: now, updatedAt: now, hostPreferences: {}, projects: {}, migrations: {} });
+    }
+  }
+
+  private async readManifest(directory = this.pointerDirectory, restore = true): Promise<Manifest> {
+    const manifestPath = path.join(directory, manifestName);
     try {
-      return this.parseManifest(JSON.parse(await readFile(this.info.manifestPath, "utf8")));
+      return this.parseManifest(JSON.parse(await readFile(manifestPath, "utf8")));
     } catch (error) {
-      const backup = await this.latestBackup();
-      if (backup) {
+      const backups = await readdir(path.join(directory, "Backups")).catch(() => []);
+      for (const backup of backups.filter((entry) => /^sounddesigner-\d+-\d+\.json$/.test(entry)).sort().reverse()) {
         try {
-          const recovered = this.parseManifest(JSON.parse(await readFile(backup, "utf8")));
-          await this.writeJson(this.info.manifestPath, recovered);
+          const recovered = this.parseManifest(JSON.parse(await readFile(path.join(directory, "Backups", backup), "utf8")));
+          if (restore) await this.writeJson(manifestPath, recovered);
           return recovered;
         } catch {
           // Report the original invalid manifest below.
         }
       }
-      throw new ResolveHostError("STORAGE_MANIFEST_INVALID", `The selected SoundDesigner folder has an invalid ${manifestName} file and no valid backup.`);
+      throw new ResolveHostError("STORAGE_MANIFEST_INVALID", `SoundDesigner has an invalid manifest at ${manifestPath} and no valid backup.`);
     }
   }
 
@@ -230,7 +241,7 @@ export class StorageService {
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
-    const lockPath = path.join(this.root, lockName);
+    const lockPath = path.join(this.pointerDirectory, lockName);
     for (let attempt = 0; attempt < lockAttempts; attempt += 1) {
       let handle;
       try {
@@ -261,39 +272,8 @@ export class StorageService {
   private async backupManifest(): Promise<void> {
     const source = this.info.manifestPath;
     if (!(await stat(source).catch(() => null))?.isFile()) return;
-    const backup = path.join(this.root, "Backups", `sounddesigner-${Date.now()}-${process.pid}.json`);
+    const backup = path.join(this.pointerDirectory, "Backups", `sounddesigner-${Date.now()}-${process.pid}.json`);
     await cp(source, backup, { errorOnExist: true, force: false });
-  }
-
-  private async latestBackup(): Promise<string | null> {
-    const directory = path.join(this.root, "Backups");
-    const entries = await readdir(directory).catch(() => []);
-    const backups = entries.filter((entry) => /^sounddesigner-\d+-\d+\.json$/.test(entry)).sort().reverse();
-    return backups[0] ? path.join(directory, backups[0]) : null;
-  }
-
-  private async copyVerified(source: string, destination: string): Promise<void> {
-    const sourceStat = await stat(source);
-    if (sourceStat.isDirectory()) {
-      await mkdir(destination, { recursive: true });
-      for (const entry of await readdir(source)) await this.copyVerified(path.join(source, entry), path.join(destination, entry));
-      return;
-    }
-    const destinationStat = await stat(destination).catch(() => null);
-    if (!destinationStat) await copyFile(source, destination);
-    if (await this.fileHash(source) !== await this.fileHash(destination)) {
-      throw new ResolveHostError("STORAGE_COPY_INVALID", `Storage copy verification failed for ${path.basename(source)}.`);
-    }
-  }
-
-  private fileHash(filePath: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const hash = createHash("sha256");
-      const input = createReadStream(filePath);
-      input.on("error", reject);
-      input.on("data", (chunk) => hash.update(chunk));
-      input.on("end", () => resolve(hash.digest("hex")));
-    });
   }
 
   private async writeJson(filePath: string, value: unknown): Promise<void> {

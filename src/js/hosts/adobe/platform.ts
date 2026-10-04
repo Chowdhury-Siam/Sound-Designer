@@ -137,6 +137,7 @@ export const createAdobePlatform = (): SoundDesignerPlatform => {
       getLibraryMetadata: () => storageResult(async () => { await readyStorage(); return storage!.getLibraryMetadata(); }),
       saveLibraryMetadata: (value) => storageResult(async () => { await readyStorage(); await storage!.saveLibraryMetadata(value); return { saved: true as const }; }),
       changeLocation: () => storageResult(async () => storage ? storage.changeLocation() : null),
+      setAudioStorageMode: (mode) => storageResult(async () => { await readyStorage(); return storage!.setAudioStorageMode(mode); }),
       getProjectRoot: (project) => storageResult(async () => { await readyStorage(); return storage!.getProjectRoot(project); }),
     },
     library: {

@@ -265,20 +265,16 @@ export const registerIpcHandlers = (getHost: HostFactory, getLibrary: LibraryFac
     const existing = await getStorage().hasManifest(selectedPath);
     const confirmation = await dialog.showMessageBox({
       type: "question",
-      title: existing ? "Use existing SoundDesigner folder?" : "Move SoundDesigner data?",
-      message: existing
-        ? "Use the library, favorites, settings, and project files already stored in this folder?"
-        : "Copy your current SoundDesigner data to this folder and use it from now on?",
-      detail: existing
-        ? "Your current storage folder will remain unchanged."
-        : "The copy must finish before switching. The old folder will not be deleted.",
-      buttons: [existing ? "Use existing folder" : "Copy and switch", "Cancel"],
+      title: "Change central audio folder?",
+      message: "Save new audio in this SoundDesigner folder?",
+      detail: "Existing files stay in their current location. Settings and library records stay on this computer.",
+      buttons: [existing ? "Use existing folder" : "Use folder", "Cancel"],
       defaultId: 0,
       cancelId: 1,
       noLink: true,
     });
     if (confirmation.response !== 0) return null;
-    return getStorage().changeRoot(selectedPath, !existing);
+    return getStorage().changeRoot(selectedPath);
   }));
   ipcMain.handle("resolve:get-context", () => safe<ResolveContext>(() => getHost().getProjectContext()));
   ipcMain.handle("resolve:ensure-bin", () => safe(() => getHost().ensureSoundDesignerBin()));

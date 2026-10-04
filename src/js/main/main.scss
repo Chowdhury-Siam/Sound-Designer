@@ -3279,6 +3279,11 @@ input[type="range"]:hover::-webkit-slider-thumb {
   cursor: pointer;
 }
 
+.choice-row.storage-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .choice-row:hover {
   border-color: var(--bg-4);
 }
