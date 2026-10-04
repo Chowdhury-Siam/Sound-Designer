@@ -423,7 +423,7 @@ bun run test:installers
 
 The EXE must be built on Windows and the PKG on macOS. Unified builds require independently audited Resolve payloads and a matching signed Adobe ZXP. `SOUNDDESIGNER_INSTALLER_CANDIDATE=1` permits unpublished test builders, not release approval. No signing happens implicitly in candidate mode. Current native gates are documented in [compatibility](COMPATIBILITY.md).
 
-The current workflow has read-only repository permission and no signing or publishing job. Normal runs perform shared static checks and unsigned Adobe payload builds. Native candidate dispatch requires matching SDK-module secrets and a separately supplied, already signed ZXP that matches the current build. See [RELEASING.md](RELEASING.md) for input names, manual certification, signing/notarization gates and rollback. Phase 6 authorizes none of those production operations.
+The current workflow has read-only repository permission and no signing or publishing job. Normal runs perform shared static checks and unsigned Adobe payload builds. Native candidate dispatch uses the bundled modules under `resolve/vendor/windows` and `resolve/vendor/macos`, plus a separately supplied, already signed ZXP that matches the current build. The native modules must be included in the checkout; no module Base64 secrets are required. See [RELEASING.md](RELEASING.md) for input names, manual certification, signing/notarization gates and rollback. Phase 6 authorizes none of those production operations.
 
 ---
 
