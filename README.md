@@ -161,7 +161,7 @@ This capture renders the current Windows Forms source without installing softwar
 
 ### Audio storage and migration
 
-1. **Settings → Audio storage** offers **Beside project** and **Central folder**. New Adobe installations default to Beside project, using the v1.0.3 layout. Existing central installations keep their destination until you switch. Resolve requires Central folder; Beside project is disabled there.
+1. **Settings → Audio storage** offers **Beside project** and **Central folder**. Adobe defaults to Beside project, using the v1.0.3 layout, independently of Resolve's central folder. Older Adobe mode files reset to Beside project once because they could inherit Resolve's default; select Central folder again if desired. Subsequent Adobe choices persist. Resolve requires Central folder; Beside project is disabled there.
 2. Switching modes or changing the central folder applies to new files. Existing media stays in place, preserving timeline references. Choose an empty writable folder or an existing SoundDesigner folder for central audio.
 3. Settings, libraries, favorites, labels and collections are saved automatically in the machine-local SoundDesigner application-data directory, independently of the audio destination. The version-2 `sounddesigner.json` manifest retains cross-host locking and backups. Existing central settings are imported once without changing the source. The Adobe audio mode is saved separately so Resolve cannot overwrite it.
 4. Beside project reuses `SoundDesigner/<Project name>/` beside the saved Adobe project. Legacy project audio is not copied or moved automatically. Legacy Resolve pointer/index/memories continue to be imported. Keep legacy folders during candidate testing.

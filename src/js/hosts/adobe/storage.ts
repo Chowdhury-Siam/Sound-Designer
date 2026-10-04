@@ -40,19 +40,17 @@ export class AdobeStorageService {
     const pointer = this.readJson(path.join(this.pointerDirectory, "storage-location.json"));
     this.root = isObject(pointer) && typeof pointer.root === "string" && path.isAbsolute(pointer.root) ? path.resolve(pointer.root) : "";
     const audioSettings = this.readJson(path.join(this.pointerDirectory, "adobe-audio-storage.json"));
-    this.audioStorageMode = isObject(audioSettings) && audioSettings.mode === "project" ? "project"
-      : isObject(audioSettings) && audioSettings.mode === "central" ? "central"
-      : this.root && isObject(pointer) && pointer.audioStorageVersion !== 1 ? "central" : "project";
+    this.audioStorageMode = isObject(audioSettings) && audioSettings.version === 2 && audioSettings.mode === "central" ? "central" : "project";
     await this.ensureManifest();
-    // Preserve the upgrade default even if Resolve later configures the shared pointer.
-    if (!isObject(audioSettings)) await this.setAudioStorageMode(this.audioStorageMode);
+    // v1 could infer Central from Resolve's shared pointer; reset that ambiguous default once.
+    if (!isObject(audioSettings) || audioSettings.version !== 2) await this.setAudioStorageMode(this.audioStorageMode);
     return this.info;
   }
 
   async setAudioStorageMode(mode: AudioStorageMode): Promise<PlatformStorageInfo> {
     if (mode !== "project" && mode !== "central") throw new Error("Invalid audio storage mode.");
     if (mode === "central" && !this.root) throw new Error("Choose a central audio folder first.");
-    this.writeJson(path.join(this.pointerDirectory, "adobe-audio-storage.json"), { version: 1, mode });
+    this.writeJson(path.join(this.pointerDirectory, "adobe-audio-storage.json"), { version: 2, mode });
     this.audioStorageMode = mode;
     return this.info;
   }
@@ -84,7 +82,7 @@ export class AdobeStorageService {
         this.writeJson(path.join(selected, MANIFEST), { version: 2, createdAt: now, updatedAt: now, hostPreferences: {}, projects: {}, migrations: {} });
       } else this.readManifest(selected, false);
       fs.mkdirSync(this.pointerDirectory, { recursive: true });
-      await this.withLock(async () => this.writeJson(path.join(this.pointerDirectory, "storage-location.json"), { version: 1, root: this.root, audioStorageVersion: 1 }));
+      await this.withLock(async () => this.writeJson(path.join(this.pointerDirectory, "storage-location.json"), { version: 1, root: this.root }));
       return this.info;
     } catch (error) {
       this.root = previous;

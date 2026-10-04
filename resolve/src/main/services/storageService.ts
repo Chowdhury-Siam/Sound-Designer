@@ -144,14 +144,7 @@ export class StorageService {
   private async savePointer(): Promise<void> {
     await mkdir(this.pointerDirectory, { recursive: true });
     await this.withLock(async () => {
-      const existingRoot = await this.configuredRoot(this.pointerDirectory);
-      let audioStorageVersion = 1;
-      if (existingRoot) {
-        const pointer = JSON.parse(await readFile(this.pointerPath, "utf8")) as { audioStorageVersion?: number };
-        // Keep old Adobe defaults when Resolve opens first during an upgrade.
-        audioStorageVersion = pointer.audioStorageVersion === 1 ? 1 : 0;
-      }
-      await this.writeJson(this.pointerPath, { version: 1, root: this.root, audioStorageVersion });
+      await this.writeJson(this.pointerPath, { version: 1, root: this.root });
     });
   }
 

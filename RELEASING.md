@@ -16,8 +16,8 @@ The current candidate is **unpublished**. See [compatibility](COMPATIBILITY.md) 
 
 `.github/workflows/main.yml` runs on main pushes, pull requests and manual dispatch with `contents: read`. It has no publication job, release-tag trigger, publisher certificate restore or signing operation. Normal runs skip SDK/installer jobs. Explicit `native_candidates=true` dispatch requires:
 
-- `RESOLVE_WORKFLOW_NODE_WINDOWS_BASE64`: official Windows x64 SDK addon.
-- `RESOLVE_WORKFLOW_NODE_MACOS_BASE64`: official addon supporting the runner's arm64 Resolve runtime. An Intel candidate needs a separately configured x64 runner/module and independent native evidence.
+- `resolve/vendor/windows/WorkflowIntegration.node`: bundled Windows x64 addon, included in the checkout.
+- `resolve/vendor/macos/WorkflowIntegration.node`: bundled Mac addon supporting the arm64 Resolve target, included in the checkout. An Intel candidate needs a separately configured x64 target and independent native evidence. No native-module Base64 secrets are required.
 - `SOUNDDESIGNER_CANDIDATE_ZXP_BASE64`: separately approved, existing signed Adobe ZXP whose non-signature file hashes match the current candidate Adobe payload.
 
 Missing inputs fail with `BLOCKED` messages. A filesystem path alone does not supply a module/certificate. Workflow edits were locally reviewed/tested; a remote Actions run is separate evidence. The native-certification reminder's successful shell exit is not certification.

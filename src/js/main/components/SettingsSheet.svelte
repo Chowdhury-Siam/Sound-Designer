@@ -6,6 +6,7 @@
     InsertionTarget,
     LibraryFolder,
   } from "../types";
+  import { tick } from "svelte";
   import { INSTALLED_VERSION, type UpdateState } from "../updater";
   import Icon from "./Icon.svelte";
   import IconButton from "./IconButton.svelte";
@@ -32,7 +33,7 @@
     storageBusy: boolean;
     audioStorageMode: "project" | "central";
     projectStorageAvailable: boolean;
-    onAudioStorageMode: (mode: "project" | "central") => void;
+    onAudioStorageMode: (mode: "project" | "central") => Promise<void>;
     update: UpdateState;
     onAutoPreview: (value: boolean) => void;
     onLoop: (value: boolean) => void;
@@ -63,6 +64,17 @@
   let draftFreesoundApiKey = $state("");
   let draftFreesoundLicenseFilter = $state<FreesoundLicenseFilter>("commercial");
   let dialogElement = $state<HTMLElement | null>(null);
+  let draftAudioStorageMode = $state<"project" | "central">("project");
+
+  $effect(() => { draftAudioStorageMode = audioStorageMode; });
+
+  const selectAudioStorageMode = async (mode: "project" | "central") => {
+    try { await onAudioStorageMode(mode); }
+    finally {
+      await tick();
+      draftAudioStorageMode = audioStorageMode;
+    }
+  };
 
   $effect(() => {
     if (open) {
@@ -154,11 +166,11 @@
             <span class="field-label">Audio storage</span>
             <div class="choice-list" role="radiogroup" aria-label="Audio storage">
               <label class="choice-row" class:storage-disabled={!projectStorageAvailable}>
-                <input checked={audioStorageMode === "project"} disabled={!projectStorageAvailable || storageBusy} name="audio-storage" onclick={(event) => { event.preventDefault(); onAudioStorageMode("project"); }} type="radio" />
+                <input bind:group={draftAudioStorageMode} value="project" disabled={!projectStorageAvailable || storageBusy} name="audio-storage" onchange={() => selectAudioStorageMode("project")} type="radio" />
                 <span><strong>Beside project</strong><small>{projectStorageAvailable ? "Keep audio in a SoundDesigner folder beside your saved project." : "DaVinci Resolve requires a central audio folder."}</small></span>
               </label>
               <label class="choice-row">
-                <input checked={audioStorageMode === "central"} disabled={storageBusy} name="audio-storage" onclick={(event) => { event.preventDefault(); onAudioStorageMode("central"); }} type="radio" />
+                <input bind:group={draftAudioStorageMode} value="central" disabled={storageBusy} name="audio-storage" onchange={() => selectAudioStorageMode("central")} type="radio" />
                 <span><strong>Central folder</strong><small>Keep audio for all projects in one chosen SoundDesigner folder.</small></span>
               </label>
             </div>

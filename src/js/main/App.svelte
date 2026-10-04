@@ -2882,7 +2882,7 @@ import { isCloudSound } from "./cloudLibrary";
     onCheckUpdate={refreshUpdates}
     onOpenUpdate={openUpdate}
     onChangeStorage={changeStorageLocation}
-    audioStorageMode={storageInfo?.audioStorageMode || "central"}
+    audioStorageMode={storageInfo?.audioStorageMode || (platform().mode === "adobe" ? "project" : "central")}
     projectStorageAvailable={platform().mode === "adobe"}
     onAudioStorageMode={changeAudioStorageMode}
     onClose={() => settingsOpen = false}

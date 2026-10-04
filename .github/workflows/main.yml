@@ -62,10 +62,10 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            sdk_secret: RESOLVE_WORKFLOW_NODE_WINDOWS_BASE64
+            native_module: resolve/vendor/windows/WorkflowIntegration.node
             arch: x64
           - os: macos-latest
-            sdk_secret: RESOLVE_WORKFLOW_NODE_MACOS_BASE64
+            native_module: resolve/vendor/macos/WorkflowIntegration.node
             arch: arm64
     runs-on: ${{ matrix.os }}
     env:
@@ -77,14 +77,13 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
-      - name: Require matching SDK input (no fabricated or static fallback)
+      - name: Require bundled native module (no static fallback)
         shell: pwsh
         env:
-          SDK_BASE64: ${{ secrets[matrix.sdk_secret] }}
+          NATIVE_MODULE: ${{ matrix.native_module }}
         run: |
-          if (-not $env:SDK_BASE64) { throw 'BLOCKED: matching Resolve SDK module secret is missing.' }
-          $native = Join-Path $env:RUNNER_TEMP 'WorkflowIntegration.node'
-          [IO.File]::WriteAllBytes($native, [Convert]::FromBase64String($env:SDK_BASE64))
+          $native = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_MODULE
+          if (-not (Test-Path -LiteralPath $native -PathType Leaf)) { throw 'BLOCKED: bundled Resolve native module is missing.' }
           "RESOLVE_WORKFLOW_NODE=$native" >> $env:GITHUB_ENV
       - run: bun run build:resolve
       - uses: actions/upload-artifact@v4
