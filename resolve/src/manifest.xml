@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BlackmagicDesign>
+  <Plugin>
+    <Id>com.sound.designer.resolve</Id>
+    <Name>SoundDesigner</Name>
+    <Version>1.0.4</Version>
+    <Description>Sound effects workspace for DaVinci Resolve</Description>
+    <FilePath>main.cjs</FilePath>
+  </Plugin>
+</BlackmagicDesign>

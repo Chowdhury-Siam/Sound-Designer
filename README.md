@@ -4,7 +4,9 @@
 
 **Find it. Shape it. Drop it into the edit.**
 
-A fast, project-aware sound-effects workspace for **Adobe Premiere Pro** and **After Effects**.
+A project-aware sound-effects workspace for **Adobe Premiere Pro**, **After Effects**, and **DaVinci Resolve Studio**.
+
+See [compatibility and known limitations](COMPATIBILITY.md). Native certification is incomplete; the unified candidate is not available from the public release link.
 
 <p>
   <a href="https://github.com/iboyshanto/SoundDesigner/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/iboyshanto/SoundDesigner?style=for-the-badge&color=f97316&label=Latest"></a>
@@ -23,8 +25,6 @@ A fast, project-aware sound-effects workspace for **Adobe Premiere Pro** and **A
 ---
 
 ## 🧭 Explore
-
-**New in v1.0.3:** Cloud SFX, SFX Assistant for After Effects, Favorites collections, waveform tiles, Quick FX and a compact player dock. [Read the release notes](.github/releases/v1.0.3.md).
 
 - [Meet SoundDesigner](#meet-sounddesigner)
 - [Features](#features)
@@ -104,7 +104,7 @@ Local library + Freesound
   <tr>
     <td width="50%" valign="top">
       <h3>🗂️ Project-Smart Organization</h3>
-      <p>Prepared audio is stored beside the saved Adobe project, while imported media stays grouped in a dedicated SoundDesigner bin.</p>
+       <p>Prepared audio is stored under your selected portable SoundDesigner folder, scoped to the active project. Imported media stays grouped in a dedicated SoundDesigner bin.</p>
     </td>
     <td width="50%" valign="top">
       <h3>📐 Built for Dockable Panels</h3>
@@ -136,17 +136,38 @@ Local library + Freesound
 | **Adobe Premiere Pro** | 15.4 or newer |
 | **Adobe After Effects** | 18.4 or newer |
 | **Adobe extension runtime** | CEP 11 / Chromium 88 |
-| **Installer** | Windows setup EXE or macOS drag-install DMG |
+| **Resolve candidate target** | Resolve Studio 20.1+ on Windows/macOS with matching SDK addon; native acceptance remains BLOCKED |
+| **Installer** | Unified candidate: Windows setup EXE or native macOS PKG (not yet released/certified) |
 | **Internet** | Only for Freesound and update checks |
 
 ### Install
 
-Download the installer for your operating system from [GitHub Releases](https://github.com/iboyshanto/SoundDesigner/releases/latest):
+Public Adobe-only installers remain at [GitHub Releases](https://github.com/iboyshanto/SoundDesigner/releases/latest). The following unified installers are candidate filenames, not published downloads:
 
-- **Windows:** run `SoundDesigner-vX.Y.Z-Windows-Setup.exe` and approve the administrator prompt. The setup app safely replaces an older installation.
-- **macOS:** open `SoundDesigner-vX.Y.Z-macOS.dmg`, then drag **SoundDesigner** onto **Adobe CEP Extensions**. Finder may request administrator access.
+- **Windows unified candidate:** run `SoundDesigner-vX.Y.Z-Windows-Setup.exe`, select Adobe, Resolve Studio, or both, then approve elevation. Selections survive elevation; updates are independent per target.
+- **macOS unified candidate:** open `SoundDesigner-vX.Y.Z-macOS.pkg` with native Installer and click **Customize** to select Adobe, Resolve Studio, or both. At least one target is required. Destinations are fixed under `/Library/Application Support`.
+
+These unified installers are unreleased and native certification is incomplete. Existing public Adobe-only releases may still provide a DMG; follow their release-specific instructions. Portable data is not installed, migrated, or removed by setup. Choose its folder inside the extension on first launch or in Settings.
 
 Restart Premiere Pro or After Effects, then open **Window → Extensions** or **Window → Extensions (Legacy)** and choose **SoundDesigner**.
+
+For the Resolve candidate, restart **Resolve Studio** and open **Workspace → Workflow Integrations → SoundDesigner**. Free Resolve and Linux Workflow Integration hosting are not claimed. Exact system installation paths and current evidence are in [COMPATIBILITY.md](COMPATIBILITY.md).
+
+### Installer screenshots
+
+![Current Windows setup, both applications selected](docs/windows-installer.png)
+
+This capture renders the current Windows Forms source without installing software. It does not certify elevation, DPI, accessibility or native payload operation. Native macOS Customize/receipt screenshots are **BLOCKED** until a Mac candidate is built and tested; no simulated Mac screenshot is presented as evidence.
+
+### Shared storage onboarding and migration
+
+1. On first launch, choose an empty writable folder or adopt an existing SoundDesigner folder. Select the **same folder** in Adobe and Resolve to share libraries, favorites, labels, collections and portable settings.
+2. Use **Settings → Storage** to change it. A new empty destination receives a verified copy before the pointer switches. The old folder is retained; adopting an existing folder uses its settings/data.
+3. The version-2 `sounddesigner.json` manifest is protected by the same cross-host lock. If it is corrupt, a valid manifest backup can be recovered. A live lock is never stolen; interrupted-copy/retained-backup errors require review.
+4. Legacy Adobe project media is copied and hash-verified on demand for that saved project, leaving original data intact. Legacy Resolve pointer/index/memories are imported without overwriting an existing shared root. Do not delete legacy folders during candidate testing.
+5. Credentials are outside this portable root. The shared Freesound key is machine-local at `%APPDATA%\\SoundDesigner\\credentials.json` on Windows or `~/Library/Application Support/SoundDesigner/credentials.json` on macOS. Existing per-host keys migrate on opening the updated host; an existing shared key wins. Open updated Resolve first to migrate a key previously entered there, then Adobe. Clearing it is shared. The file is plaintext with user-level access; it is not an encrypted OS vault.
+
+Unavailable/read-only volumes, concurrent native-host use and external-volume permissions still require the manual acceptance matrix. Setup never migrates or deletes portable media or credentials.
 
 > [!TIP]
 > Save the Adobe project before using cloud audio, conversion, effects rendering, or segment export. SoundDesigner uses the project location to keep prepared media portable and organized.
@@ -259,23 +280,25 @@ Treat the key like a password:
 
 ## 🗂️ Project Audio and Conversion
 
-Directly supported local audio can be inserted from its original location. When a cloud download, conversion, normalization, effect, or selected segment needs a new file, SoundDesigner stores it beside the saved Adobe project:
+Directly supported local audio can be inserted from its original location. Downloads, converted/processed audio and segments use the selected portable storage root:
 
 ```text
-<Project folder>/
-└── SoundDesigner/
-    └── <Project name>/
-        ├── Freesound/
-        │   └── Originals/
+<Selected SoundDesigner root>/
+└── Projects/
+    └── <adobe-or-resolve>/<Project name>--<stable project ID>/
+        ├── Downloads/
         ├── Converted/
+        ├── Processed/
         ├── Segments/
+        ├── Waveforms/
         └── Metadata/
 ```
 
 | Folder | Purpose |
 | --- | --- |
-| `Freesound/Originals` | Provider previews downloaded only when needed |
+| `Downloads` | Provider audio downloaded only when needed |
 | `Converted` | Adobe-compatible, normalized, or effect-processed WAV files |
+| `Processed` / `Waveforms` | Processed output and reusable waveform data |
 | `Segments` | Rendered waveform selections |
 | `Metadata` | Source, license, conversion, processing, and selection records |
 
@@ -310,6 +333,7 @@ Converted output is 24-bit PCM WAV with its sample rate and channel count preser
 | **Enable Freesound library** | Adds or removes the optional cloud source |
 | **License filter** | Restricts Freesound searches to the chosen license group |
 | **Updates** | Checks stable GitHub Releases without installing silently |
+| **Storage** | Adopts or copies to another shared portable storage folder |
 
 ---
 
@@ -348,11 +372,13 @@ bun run build
 | Path | Responsibility |
 | --- | --- |
 | `src/js/main` | Svelte UI, libraries, waveform, Freesound, conversion, and processing |
+| `src/js/platform` / `src/js/hosts/adobe` | Shared boundary and Adobe native adapters |
+| `resolve` | Backend, preload, native material and two-file shared-UI entry/adapter; no component/style fork |
 | `src/jsx/ppro` | Premiere Pro host integration |
 | `src/jsx/aeft` | After Effects host integration |
 | `scripts` | Smoke tests, certificate creation, release packaging, and platform installer builders |
 | `cep.config.ts` | CEP hosts, runtime floor, manifest, and build configuration |
-| `.github/workflows/main.yml` | Signed Windows EXE and macOS DMG release automation |
+| `.github/workflows/main.yml` | Read-only, unpublished readiness checks and explicitly dispatched native candidate builds |
 
 ---
 
@@ -376,19 +402,16 @@ The signed ZXP in `release/` is the input for both platform installers:
 # Windows only: build the branded setup EXE
 bun run installer:windows
 
-# macOS only: build the branded drag-install DMG
+# macOS only: build the native distribution PKG
 bun run installer:macos
 
 # Validate installer scripts, paths, and workflow wiring
 bun run test:installers
 ```
 
-The EXE must be built on Windows and the DMG on macOS. Pushing a semantic version tag such as `v1.2.3` runs `.github/workflows/main.yml`, builds both installers, and prepares a **draft** GitHub Release. The workflow requires these repository secrets:
+The EXE must be built on Windows and the PKG on macOS. Unified builds require independently audited Resolve payloads and a matching signed Adobe ZXP. `SOUNDDESIGNER_INSTALLER_CANDIDATE=1` permits unpublished test builders, not release approval. No signing happens implicitly in candidate mode. Current native gates are documented in [compatibility](COMPATIBILITY.md).
 
-- `SOUNDDESIGNER_ZXP_CERT_BASE64` — the publisher `.p12` encoded as Base64.
-- `SOUNDDESIGNER_ZXP_PASSWORD` — the certificate password.
-
-Add matching release notes at `.github/releases/vX.Y.Z.md` before pushing the tag. Review and test the draft artifacts before publishing. See [RELEASING.md](RELEASING.md) for the complete release checklist.
+The current workflow has read-only repository permission and no signing or publishing job. Normal runs perform shared static checks and unsigned Adobe payload builds. Native candidate dispatch requires matching SDK-module secrets and a separately supplied, already signed ZXP that matches the current build. See [RELEASING.md](RELEASING.md) for input names, manual certification, signing/notarization gates and rollback. Phase 6 authorizes none of those production operations.
 
 ---
 
@@ -406,6 +429,18 @@ Save the Premiere Pro or After Effects project and retry. Project-scoped audio n
 <summary><strong>Freesound does not appear in the Library panel</strong></summary>
 
 Enable **Freesound library** in Settings, enter a valid personal API key, save, and then enable the Freesound source in the Library panel.
+</details>
+
+<details>
+<summary><strong>The API key or shared settings differ between Adobe and Resolve</strong></summary>
+
+Open the updated host containing the old key first, then switch focus to the other updated host. Keys share the machine-local store; portable settings require both hosts to select the same portable folder. A credential-store read/write error is shown instead of silently overwriting it. Do not paste keys into reports or screenshots.
+</details>
+
+<details>
+<summary><strong>Resolve will not open, an installer is blocked, or storage is busy</strong></summary>
+
+Resolve needs Studio, a matching OS/CPU SDK addon and a supported native runtime. Static header checks do not prove ABI compatibility. Close selected applications before setup. Review retained installation `.previous` trees and locks before retrying; do not erase portable storage or a live manifest lock. An unavailable volume must be reconnected or explicitly changed in Settings. Follow [rollback and troubleshooting](RELEASING.md#rollback-and-troubleshooting).
 </details>
 
 <details>
@@ -431,7 +466,7 @@ Confirm that an Adobe project—and, in After Effects, an active composition—i
 ## 🔒 Respectful by Design
 
 - Original local audio is never overwritten by conversion or effects.
-- Freesound credentials are user-provided preferences and are never committed by the project.
+- Freesound credentials are user-provided, machine-local and excluded from portable manifests and release payloads.
 - Cloud downloads are limited to trusted Freesound HTTPS hosts and use bounded file sizes.
 - Interrupted temporary downloads and renders are cleaned up.
 - Updates are explicit: SoundDesigner never silently replaces the installed extension.

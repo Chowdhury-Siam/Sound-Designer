@@ -26,6 +26,7 @@ export const relativeTime = (timestamp: number, now: number) => {
 export const hostLabel = (host: HostApp) => {
   if (host === "premiere") return "Premiere Pro";
   if (host === "aftereffects") return "After Effects";
+  if (host === "resolve") return "DaVinci Resolve";
   if (host === "browser") return "Browser preview";
   return "Adobe host";
 };

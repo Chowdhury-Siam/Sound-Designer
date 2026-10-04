@@ -1,5 +1,6 @@
 import { version as installedVersion } from "../../../package.json";
 import { https } from "../lib/cep/node";
+import { platform } from "../platform/client";
 
 export const UPDATE_REPOSITORY = "iboyshanto/SoundDesigner";
 export const INSTALLED_VERSION = installedVersion;
@@ -104,6 +105,7 @@ const assetScore = (asset: ReleaseAsset): number => {
   else return -1;
   if (isWindows && /(?:win|windows)/.test(name)) score += 20;
   if (isMac && /(?:mac|macos)/.test(name)) score += 20;
+  if (isMac && /\.pkg$/.test(name)) score += 30;
   if (/universal/.test(name)) score += 10;
   return score;
 };
@@ -198,12 +200,18 @@ const stateFromRelease = (release: GithubRelease, checkedAt: number): UpdateStat
 };
 
 export const checkForUpdates = async (force = false): Promise<UpdateState> => {
-  if (!window.cep) return { status: "unsupported", currentVersion: INSTALLED_VERSION, message: "Update checks run inside the Adobe panel." };
+  if (!window.cep && !platform().capabilities.nativeUpdates) return { status: "unsupported", currentVersion: INSTALLED_VERSION, message: "Update checks run inside the installed panel." };
   const cache = readCache();
   const now = Date.now();
   if (!force && cache && now - cache.checkedAt < CHECK_INTERVAL_MS) return cache.state;
   try {
-    const response = await requestLatestRelease(cache?.etag);
+    let response: { statusCode: number; body: string; etag?: string };
+    if (platform().capabilities.nativeUpdates) {
+      const result = await platform().updates.getLatestRelease(cache?.etag);
+      if (!result.ok) throw new Error(result.error.message);
+      const release = result.data as { notModified: boolean; etag?: string; release?: unknown };
+      response = { statusCode: release.notModified ? 304 : 200, body: JSON.stringify(release.release), etag: release.etag };
+    } else response = await requestLatestRelease(cache?.etag);
     if (response.statusCode === 304 && cache) {
       const refreshed = { ...cache, checkedAt: now, state: { ...cache.state, checkedAt: now } };
       writeCache(refreshed);

@@ -11,9 +11,9 @@
   import IconButton from "./IconButton.svelte";
 
   let {
-    open, folder, autoPreview, loop, insertionTarget, conversionPolicy, normalization, normalizationTargetDb, freesoundLibraryEnabled, freesoundApiKey, freesoundLicenseFilter,
+    open, folder, autoPreview, loop, insertionTarget, conversionPolicy, normalization, normalizationTargetDb, freesoundLibraryEnabled, freesoundApiKey, freesoundLicenseFilter, storagePath, storageAvailable, storageBusy,
     update, onAutoPreview, onLoop, onInsertionTarget, onConversionPolicy, onNormalization, onNormalizationTargetDb, onFreesoundApiKey,
-    onFreesoundLibraryEnabled, onFreesoundLicenseFilter, onOpenFreesoundSetup, onOpenFreesoundTerms, onBrowseFreesound, onCheckUpdate, onOpenUpdate, onClose, onDelete,
+    onFreesoundLibraryEnabled, onFreesoundLicenseFilter, onOpenFreesoundSetup, onOpenFreesoundTerms, onBrowseFreesound, onCheckUpdate, onOpenUpdate, onChangeStorage, onClose, onDelete,
   }: {
     open: boolean;
     folder: LibraryFolder | null;
@@ -26,6 +26,9 @@
     freesoundLibraryEnabled: boolean;
     freesoundApiKey: string;
     freesoundLicenseFilter: FreesoundLicenseFilter;
+    storagePath: string;
+    storageAvailable: boolean;
+    storageBusy: boolean;
     update: UpdateState;
     onAutoPreview: (value: boolean) => void;
     onLoop: (value: boolean) => void;
@@ -41,6 +44,7 @@
     onBrowseFreesound: () => void;
     onCheckUpdate: () => void;
     onOpenUpdate: () => void;
+    onChangeStorage: () => void;
     onClose: () => void;
     onDelete: () => void;
   } = $props();
@@ -139,6 +143,16 @@
             <span class="field-label">Library folder</span>
             <div class="path-field"><Icon name="folder" /><code>{folder.path}</code></div>
             <p>{folder.fileCount.toLocaleString()} indexed audio files. Removing this library never deletes the source folder or its files.</p>
+          </div>
+        {/if}
+        {#if storageAvailable}
+          <div class="settings-group">
+            <span class="field-label">Storage location</span>
+            <div class="path-field"><Icon name="folder" /><code>{storagePath || "No portable folder selected"}</code></div>
+            <div class="settings-inline-action">
+              <p>Downloads, prepared audio, segments, metadata, and shared preferences use this folder. Changing it copies data first and never deletes the previous folder.</p>
+              <button class="ghost-button" disabled={storageBusy} onclick={onChangeStorage} type="button">{storageBusy ? "Changing…" : "Change folder"}</button>
+            </div>
           </div>
         {/if}
         <div class="settings-group">

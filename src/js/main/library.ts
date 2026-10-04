@@ -1,5 +1,7 @@
 import { fs, path } from "../lib/cep/node";
 import { csi } from "../lib/utils/bolt";
+import { platform } from "../platform/client";
+import { nativePathKey as normalizedNativePathKey } from "../platform/nativePaths";
 import type { AccentName, LibraryFolder, LibraryTreeNode, ScanProgress, SoundFile } from "./types";
 
 const AUDIO_EXTENSIONS: { [extension: string]: boolean } = {
@@ -49,6 +51,7 @@ const ACCENT: AccentName = "graphite";
 export const LIBRARY_STORAGE_KEY = "sounddesigner.library-folders.v1";
 const SHARED_STORAGE_DIRECTORY = "SoundDesigner";
 const SHARED_STORAGE_FILE = "library-folders.json";
+const isWindowsPath = (value: string) => path?.sep === "\\" || /^[A-Za-z]:[\\/]|^\\\\/.test(value);
 
 export const normalizeDialogPath = (value: string) => {
   let normalized = String(value || "").trim().replace(/\0/g, "");
@@ -173,8 +176,8 @@ const directoryVisitKey = (nativePath: string, rootPath: string, canonicalRoot: 
 };
 
 const nativePathKey = (nativePath: string) => {
-  const normalized = normalizeDialogPath(nativePath).replace(/[\\/]+$/, "");
-  return path && path.sep === "\\" ? normalized.toLowerCase() : normalized;
+  const normalized = normalizeDialogPath(nativePath);
+  return normalizedNativePathKey(normalized, isWindowsPath(normalized));
 };
 
 export const sameNativePath = (first: string, second: string) =>
@@ -210,7 +213,8 @@ const fileTags = (fileName: string) =>
     .slice(0, 8);
 
 const fileNameFromPath = (filePath: string) => {
-  const normalized = String(filePath || "").replace(/\\/g, "/");
+  const value = String(filePath || "");
+  const normalized = isWindowsPath(value) ? value.replace(/\\/g, "/") : value;
   return normalized.slice(normalized.lastIndexOf("/") + 1);
 };
 
@@ -679,13 +683,21 @@ export const loadLibraryPaths = () => {
 export const nextAccent = (_folderCount: number): AccentName => ACCENT;
 
 export const folderNameFromPath = (folderPath: string) => {
-  const normalized = folderPath.replace(/\\/g, "/").replace(/\/+$/, "");
-  return normalized.slice(normalized.lastIndexOf("/") + 1) || folderPath;
+  const normalized = folderPath.replace(isWindowsPath(folderPath) ? /[\\/]+$/ : /\/+$/, "");
+  return fileNameFromPath(normalized) || folderPath;
 };
 
 export const fileUrl = (filePath: string) => {
   if (!filePath) return "";
-  let normalized = filePath.replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "").replace(/\\/g, "/");
+  if (platform().mode === "resolve") {
+    let binary = "";
+    for (const byte of new TextEncoder().encode(filePath)) binary += String.fromCharCode(byte);
+    return `sounddesigner://media/${btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")}`;
+  }
+  const windowsPath = isWindowsPath(filePath);
+  let normalized = windowsPath
+    ? filePath.replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "").replace(/\\/g, "/")
+    : filePath;
   const isUnc = /^\/\//.test(normalized);
   if (/^[A-Za-z]:/.test(normalized)) normalized = `/${normalized}`;
   let encoded = normalized.split("/").map((segment) => encodeURIComponent(segment)).join("/");

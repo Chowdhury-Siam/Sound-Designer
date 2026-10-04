@@ -13,6 +13,7 @@ type InsertAudioRequest = {
   name: string;
   targetAudioTrack: number;
   insertionTarget?: "playhead" | "selected-clip";
+  projectPath?: string;
 };
 
 type HostResult = {
@@ -70,6 +71,13 @@ function normalizePath(value: string): string {
   var normalized: string = String(value || "").replace(/\\/g, "/");
   if (String($.os || "").toLowerCase().indexOf("windows") >= 0) normalized = normalized.toLowerCase();
   return normalized;
+}
+
+function requestMatchesCurrentProject(request: InsertAudioRequest): boolean {
+  var context: ProjectContext;
+  if (!request.projectPath) return true;
+  context = getProjectContext();
+  return Boolean(context.ok && context.projectPath && normalizePath(context.projectPath) === normalizePath(request.projectPath));
 }
 
 function findProjectItem(parent: ProjectItem, mediaPath: string): ProjectItem | null {
@@ -264,6 +272,9 @@ export function organizeAudioMedia(request: InsertAudioRequest): HostResult {
     if (!app.project) {
       return { ok: false, host: "premiere", message: "Open a Premiere Pro project before organizing audio." };
     }
+    if (!requestMatchesCurrentProject(request)) {
+      return { ok: false, host: "premiere", message: "The active Premiere Pro project changed before audio organization completed." };
+    }
     project = app.project;
     normalizedPath = normalizePath(sourceFile.fsName);
     projectItem = findProjectItem(project.rootItem, normalizedPath);
@@ -318,6 +329,9 @@ export function insertAudioClip(request: InsertAudioRequest): HostResult {
     }
     if (!app.project) {
       return { ok: false, host: "premiere", message: "Open a Premiere Pro project before inserting audio." };
+    }
+    if (!requestMatchesCurrentProject(request)) {
+      return { ok: false, host: "premiere", message: "The active Premiere Pro project changed before audio insertion started." };
     }
     project = app.project;
     sequence = project.activeSequence;

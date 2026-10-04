@@ -38,7 +38,7 @@ export const normalizeAudioProcessing = (value?: Partial<AudioProcessingSettings
   echoMix: Math.round(Math.max(0, Math.min(0.6, Number(value?.echoMix) || 0)) * 100) / 100,
   reverbMix: Math.round(Math.max(0, Math.min(0.6, Number(value?.reverbMix) || 0)) * 100) / 100,
   reverse: Boolean(value?.reverse),
-  gainDb: Math.round(Math.max(-24, Math.min(12, Number(value?.gainDb) || 0)) * 2) / 2,
+  gainDb: Math.round(Math.max(-48, Math.min(12, Number(value?.gainDb) || 0)) * 2) / 2,
   pitchSemitones: Math.round(Math.max(-12, Math.min(12, Number(value?.pitchSemitones) || 0)) * 2) / 2,
   speed: Math.round(Math.max(0.5, Math.min(2, Number(value?.speed) || 1)) * 20) / 20,
   preservePitch: value?.preservePitch !== false,

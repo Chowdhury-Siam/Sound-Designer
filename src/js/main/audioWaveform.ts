@@ -1,5 +1,6 @@
 import { isLibraryMediaUrl } from "./cloudLibrary";
 import { fs, https } from "../lib/cep/node";
+import { platform } from "../platform/client";
 import { encodeRenderedWave, renderAudioProcessing } from "./audioEffects";
 import type { AudioProcessingSettings, AudioSegmentSelection, SoundFile } from "./types";
 
@@ -25,7 +26,13 @@ const retainProcessedPreviewDecode = (key: string, buffer: AudioBuffer) => {
   }, 20_000);
 };
 
-const readAudioFile = (filePath: string) => new Promise<ArrayBuffer>((resolve, reject) => {
+const readAudioFile = async (filePath: string): Promise<ArrayBuffer> => {
+  if (platform().capabilities.nativeAudioPreparation) {
+    const result = await platform().audio.readFile(filePath);
+    if (!result.ok) throw new Error(result.error.message);
+    return new Uint8Array(result.data).buffer;
+  }
+  return new Promise<ArrayBuffer>((resolve, reject) => {
   fs.readFile(filePath, (error, bytes) => {
     if (error) {
       reject(error);
@@ -34,7 +41,8 @@ const readAudioFile = (filePath: string) => new Promise<ArrayBuffer>((resolve, r
     const source = bytes.buffer as ArrayBuffer;
     resolve(source.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
   });
-});
+  });
+};
 
 const trustedRemoteAudioUrl = (value: string) => {
   if (isLibraryMediaUrl(value)) return true;
@@ -124,8 +132,15 @@ const readRemoteAudioWithNode = (
 });
 
 const readRemoteAudio = async (remoteUrl: string, shouldContinue?: () => boolean): Promise<ArrayBuffer> => {
+  if (remoteUrl.startsWith("blob:")) return (await fetch(remoteUrl)).arrayBuffer();
   if (!trustedRemoteAudioUrl(remoteUrl)) throw new Error("Untrusted remote audio URL.");
   if (shouldContinue && !shouldContinue()) throw new DOMException("Waveform decoding was cancelled.", "AbortError");
+  if (platform().capabilities.nativeCloud && !isLibraryMediaUrl(remoteUrl)) {
+    const result = await platform().cloud.readFreesoundPreview({ operationId: globalThis.crypto.randomUUID(), url: remoteUrl });
+    if (!result.ok) throw new Error(result.error.message);
+    if (result.data.byteLength > MAX_DECODE_BYTES) throw new Error("Remote preview is too large to decode.");
+    return new Uint8Array(result.data).buffer;
+  }
   if (!window.cep) {
     const response = await fetch(remoteUrl);
     if (!response.ok) throw new Error(`Remote preview failed (HTTP ${response.status}).`);
@@ -227,10 +242,10 @@ export const decodeAudioWaveformChannels = async (
 ): Promise<Float32Array[]> => {
   if (
     !filePath
-    || !window.cep
+    || (!window.cep && !platform().capabilities.nativeAudioPreparation)
     || fileSize > MAX_DECODE_BYTES
     || durationSeconds > MAX_DECODE_DURATION_SECONDS
-    || typeof fs.readFile !== "function"
+    || (!platform().capabilities.nativeAudioPreparation && typeof fs.readFile !== "function")
     || (shouldContinue && !shouldContinue())
   ) return [];
   const cacheKey = `${filePath}:${modifiedAt}:${fileSize}`;

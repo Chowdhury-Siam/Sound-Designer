@@ -13,6 +13,7 @@ type InsertAudioRequest = {
   name: string;
   targetAudioTrack: number;
   insertionTarget?: "playhead" | "selected-clip";
+  projectPath?: string;
 };
 
 type HostResult = {
@@ -73,6 +74,13 @@ function normalizedFilePath(file: File): string {
   var normalized: string = String(file.fsName || "").replace(/\\/g, "/");
   if (String($.os || "").toLowerCase().indexOf("windows") >= 0) normalized = normalized.toLowerCase();
   return normalized;
+}
+
+function requestMatchesCurrentProject(request: InsertAudioRequest): boolean {
+  var context: ProjectContext;
+  if (!request.projectPath) return true;
+  context = getProjectContext();
+  return Boolean(context.ok && context.projectPath && normalizedFilePath(new File(context.projectPath)) === normalizedFilePath(new File(request.projectPath)));
 }
 
 function findFootageByPath(sourceFile: File): FootageItem | null {
@@ -188,6 +196,9 @@ export function getAudioDragState(request: InsertAudioRequest): AudioDragState {
     if (!app.project || !(app.project.activeItem instanceof CompItem)) {
       return { ok: false, host: "aftereffects", layerCount: 0, message: "Activate a composition before dragging audio." };
     }
+    if (!requestMatchesCurrentProject(request)) {
+      return { ok: false, host: "aftereffects", layerCount: 0, message: "The active After Effects project changed before the drag started." };
+    }
     composition = app.project.activeItem as CompItem;
     return {
       ok: true,
@@ -219,6 +230,9 @@ export function organizeAudioMedia(request: InsertAudioRequest): HostResult {
     sourceFile = new File(request.path);
     if (!app.project) {
       return { ok: false, host: "aftereffects", message: "Open an After Effects project before organizing audio." };
+    }
+    if (!requestMatchesCurrentProject(request)) {
+      return { ok: false, host: "aftereffects", message: "The active After Effects project changed before audio organization completed." };
     }
     footage = findFootageByPath(sourceFile);
     if (!footage) {
@@ -271,6 +285,9 @@ export function insertAudioClip(request: InsertAudioRequest): HostResult {
     }
     if (!app.project) {
       return { ok: false, host: "aftereffects", message: "Open an After Effects project before inserting audio." };
+    }
+    if (!requestMatchesCurrentProject(request)) {
+      return { ok: false, host: "aftereffects", message: "The active After Effects project changed before audio insertion started." };
     }
     if (!(app.project.activeItem instanceof CompItem)) {
       return { ok: false, host: "aftereffects", message: "Activate a composition before inserting audio." };

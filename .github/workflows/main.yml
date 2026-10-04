@@ -1,105 +1,204 @@
-name: Signed Installer Release
+name: Unpublished release readiness
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - "v*.*.*"
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      native_candidates:
+        description: Build native candidates using supplied SDK modules and an existing matching signed ZXP
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release-info:
-    if: github.ref_type == 'tag' || startsWith(github.event.head_commit.message, '🚀 RELEASE v')
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: version
-        shell: bash
-        run: |
-          tag="v$(node -p "require('./package.json').version")"
-          if [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" != "$tag" ]]; then
-            echo "Tag ${{ github.ref_name }} does not match package version $tag." >&2
-            exit 1
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-  windows-installer:
-    needs: release-info
-    runs-on: windows-latest
+  shared-static:
+    name: shared-static (${{ matrix.os }}; no native certification)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
-      - name: Restore publisher certificate
+      - run: bun run check
+      - run: bun run check:resolve
+      - run: bun run test:resolve
+      - run: bun run test:audio
+      - run: bun run test:search-tabs
+      - run: bun run test:artifact-audit
+      - run: bun run test:installers
+
+  adobe-build:
+    needs: shared-static
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run build:adobe:candidate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adobe-${{ matrix.os }}
+          path: dist/cep/
+          if-no-files-found: error
+
+  resolve-build:
+    if: github.event_name == 'workflow_dispatch' && inputs.native_candidates
+    needs: shared-static
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            sdk_secret: RESOLVE_WORKFLOW_NODE_WINDOWS_BASE64
+            arch: x64
+          - os: macos-latest
+            sdk_secret: RESOLVE_WORKFLOW_NODE_MACOS_BASE64
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    env:
+      RESOLVE_TARGET_ARCH: ${{ matrix.arch }}
+      ALLOW_MISSING_NATIVE: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: Require matching SDK input (no fabricated or static fallback)
         shell: pwsh
         env:
-          CERTIFICATE_BASE64: ${{ secrets.SOUNDDESIGNER_ZXP_CERT_BASE64 }}
+          SDK_BASE64: ${{ secrets[matrix.sdk_secret] }}
         run: |
-          if (-not $env:CERTIFICATE_BASE64) { throw "SOUNDDESIGNER_ZXP_CERT_BASE64 is not configured." }
-          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\sounddesigner-publisher.p12", [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
-      - name: Build signed extension and Windows installer
-        env:
-          SOUNDDESIGNER_RELEASE_TAG: ${{ needs.release-info.outputs.tag }}
-          SOUNDDESIGNER_ZXP_CERT: ${{ runner.temp }}\sounddesigner-publisher.p12
-          SOUNDDESIGNER_ZXP_PASSWORD: ${{ secrets.SOUNDDESIGNER_ZXP_PASSWORD }}
-        run: bun run release:package && bun run installer:windows
+          if (-not $env:SDK_BASE64) { throw 'BLOCKED: matching Resolve SDK module secret is missing.' }
+          $native = Join-Path $env:RUNNER_TEMP 'WorkflowIntegration.node'
+          [IO.File]::WriteAllBytes($native, [Convert]::FromBase64String($env:SDK_BASE64))
+          "RESOLVE_WORKFLOW_NODE=$native" >> $env:GITHUB_ENV
+      - run: bun run build:resolve
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-release
+          name: resolve-${{ matrix.os }}
+          path: resolve/dist/plugin/com.sound.designer.resolve/
+          if-no-files-found: error
+
+  windows-installer:
+    needs: [adobe-build, resolve-build]
+    runs-on: windows-latest
+    env:
+      SOUNDDESIGNER_INSTALLER_CANDIDATE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: adobe-windows-latest
+          path: dist/cep
+      - uses: actions/download-artifact@v4
+        with:
+          name: resolve-windows-latest
+          path: resolve/dist/plugin/com.sound.designer.resolve
+      - name: Restore separately supplied signed ZXP; no signing in this workflow
+        shell: pwsh
+        env:
+          ZXP_BASE64: ${{ secrets.SOUNDDESIGNER_CANDIDATE_ZXP_BASE64 }}
+        run: |
+          if (-not $env:ZXP_BASE64) { throw 'BLOCKED: existing matching signed ZXP input is missing.' }
+          $zxp = Join-Path $env:RUNNER_TEMP 'SoundDesigner.zxp'
+          [IO.File]::WriteAllBytes($zxp, [Convert]::FromBase64String($env:ZXP_BASE64))
+          "SOUNDDESIGNER_ZXP=$zxp" >> $env:GITHUB_ENV
+      - run: bun run installer:windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-candidate
           path: |
-            release/SoundDesigner-*.zxp
-            release/SoundDesigner-*.zxp.sha256
             release/SoundDesigner-*-Windows-Setup.exe
             release/SoundDesigner-*-Windows-Setup.exe.sha256
+          if-no-files-found: error
 
   macos-installer:
-    needs: windows-installer
+    needs: [adobe-build, resolve-build]
     runs-on: macos-latest
+    env:
+      SOUNDDESIGNER_INSTALLER_CANDIDATE: '1'
+      RESOLVE_TARGET_ARCH: arm64
     steps:
       - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
       - uses: actions/download-artifact@v4
         with:
-          name: windows-release
-          path: release
-      - name: Build branded macOS DMG from signed extension
-        run: node scripts/build-macos-installer.mjs
+          name: adobe-macos-latest
+          path: dist/cep
+      - uses: actions/download-artifact@v4
+        with:
+          name: resolve-macos-latest
+          path: resolve/dist/plugin/com.sound.designer.resolve
+      - name: Restore separately supplied signed ZXP; no signing in this workflow
+        shell: pwsh
+        env:
+          ZXP_BASE64: ${{ secrets.SOUNDDESIGNER_CANDIDATE_ZXP_BASE64 }}
+        run: |
+          if (-not $env:ZXP_BASE64) { throw 'BLOCKED: existing matching signed ZXP input is missing.' }
+          $zxp = Join-Path $env:RUNNER_TEMP 'SoundDesigner.zxp'
+          [IO.File]::WriteAllBytes($zxp, [Convert]::FromBase64String($env:ZXP_BASE64))
+          "SOUNDDESIGNER_ZXP=$zxp" >> $env:GITHUB_ENV
+      - name: Extract and compare signed Adobe input with current build
+        run: |
+          ditto -x -k "$SOUNDDESIGNER_ZXP" "$RUNNER_TEMP/adobe-signed"
+          bun scripts/artifact-audit.ts --adobe "$RUNNER_TEMP/adobe-signed" --compare-adobe dist/cep
+      - run: bun run installer:macos
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-release
+          name: macos-installer-candidate
           path: |
-            release/SoundDesigner-*-macOS.dmg
-            release/SoundDesigner-*-macOS.dmg.sha256
+            release/SoundDesigner-*-macOS.pkg
+            release/SoundDesigner-*-macOS.pkg.sha256
+          if-no-files-found: error
 
-  publish-release:
-    needs: [release-info, windows-installer, macos-installer]
-    runs-on: ubuntu-latest
+  artifact-audit:
+    needs: [windows-installer, macos-installer]
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
       - uses: actions/download-artifact@v4
         with:
-          path: release-artifacts
-          merge-multiple: true
-      - name: Prepare release notes
-        shell: bash
+          name: ${{ matrix.os == 'windows-latest' && 'windows-installer-candidate' || 'macos-installer-candidate' }}
+          path: release
+      - if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          printf '%s\n\n' '![SoundDesigner](https://raw.githubusercontent.com/iboyshanto/SoundDesigner/main/.github/assets/SoundDesigner.png)' > release-body.md
-          cat ".github/releases/${{ needs.release-info.outputs.tag }}.md" >> release-body.md
-      - name: Prepare GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: SoundDesigner ${{ needs.release-info.outputs.tag }}
-          tag_name: ${{ needs.release-info.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          draft: true
-          body_path: release-body.md
-          files: |
-            release-artifacts/*-Windows-Setup.exe
-            release-artifacts/*-macOS.dmg
-            .github/assets/SoundDesigner.png
+          $version = node -p "require('./package.json').version"
+          bun scripts/artifact-audit.ts --windows-installer "release/SoundDesigner-v$version-Windows-Setup.exe"
+      - if: runner.os == 'macOS'
+        run: bun scripts/artifact-audit.ts --pkg "release/SoundDesigner-v$(node -p "require('./package.json').version")-macOS.pkg" --arch arm64
+
+  native-certification:
+    if: github.event_name == 'workflow_dispatch'
+    needs: shared-static
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'BLOCKED — attach manual candidate-hash-specific host, installer, receipt and signing evidence. CI tests are not native certification.' >> "$GITHUB_STEP_SUMMARY"

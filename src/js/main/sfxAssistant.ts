@@ -7,6 +7,7 @@ export type SfxStyle = "mixed" | "clean" | "organic" | "digital";
 export type SfxIntensity = "soft" | "medium" | "strong";
 
 export type SfxMoment = {
+  frame?: number;
   time: number;
   duration: number;
   intensity: number;
@@ -26,6 +27,9 @@ export type SfxAnalysis = {
 };
 
 export type SfxPlacement = {
+  frame?: number;
+  channels?: number;
+  sourceId?: string;
   time: number;
   path: string;
   name: string;

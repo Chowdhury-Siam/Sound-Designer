@@ -49,6 +49,9 @@ if (sourceMaps.length > 0) {
   throw new Error(`Release payload contains source maps: ${sourceMaps.join(", ")}`);
 }
 
+const audit = spawnSync("bun", ["scripts/artifact-audit.ts", "--prepare-adobe"], { stdio: "inherit" });
+if (audit.status !== 0) throw new Error("Adobe release payload audit failed; signing refused.");
+
 const signer = resolve("node_modules/vite-cep-plugin/lib/bin", platform() === "win32" ? "ZXPSignCmd.exe" : "ZXPSignCmd");
 if (!existsSync(signer)) throw new Error(`ZXPSignCmd was not found: ${signer}`);
 if (platform() !== "win32") chmodSync(signer, 0o755);

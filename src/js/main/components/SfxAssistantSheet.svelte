@@ -5,6 +5,7 @@
   import { rankSfxSounds, soundPeakOffset } from "../sfxAssistant";
   import { analyzeAfterEffectsSfx, placeAfterEffectsSfx } from "../hostBridge";
   import { fileUrl } from "../library";
+  import { detectHost } from "../hostBridge";
   import { resolveCloudPreview, searchCloudLibrary } from "../cloudLibrary";
 
   let {
@@ -16,11 +17,12 @@
     cloudEnabled: boolean;
     onClose: () => void;
     onStopPreview: () => void;
-    onPrepareRemote: (sound: SoundFile) => Promise<SoundFile>;
+    onPrepareRemote: (sound: SoundFile, gainDb?: number) => Promise<SoundFile>;
     onNotice: (type: "success" | "warning" | "error", message: string) => void;
   } = $props();
 
   let scope = $state<SfxScope>("selected");
+  const isResolve = detectHost() === "resolve";
   let density = $state<SfxDensity>("balanced");
   let style = $state<SfxStyle>("mixed");
   let intensity = $state<SfxIntensity>("medium");
@@ -120,14 +122,14 @@
       const prepared = new Map<string, SoundFile>();
       const remoteSounds = Array.from(new Map(analysis.moments.flatMap((_, index) => {
         const sound = availableSounds.find(item => item.id === selectedIds[index]);
-        return sound && !sound.path && !disabled[index] ? [[sound.id, sound] as const] : [];
+        return sound && (isResolve || !sound.path) && !disabled[index] ? [[sound.id, sound] as const] : [];
       })).values());
       let nextRemote = 0;
       await Promise.all(Array.from({ length: Math.min(3, remoteSounds.length) }, async () => {
         while (nextRemote < remoteSounds.length) {
           const sound = remoteSounds[nextRemote++];
-          const ready = await onPrepareRemote(sound);
-          if (!ready.path) throw new Error(`${sound.name} could not be prepared for After Effects.`);
+          const ready = await onPrepareRemote(sound, isResolve ? Number(gainDb) : undefined);
+          if (!ready.path) throw new Error(`${sound.name} could not be prepared for the host.`);
           prepared.set(sound.id, ready);
         }
       }));
@@ -137,11 +139,14 @@
         if (!sound || disabled[index]) continue;
         const ready = prepared.get(sound.id) || sound;
         placements.push({
+          frame: analysis.moments[index].frame !== undefined ? analysis.moments[index].frame! + Number(offsetFrames || 0) : undefined,
           time: Math.max(0, analysis.moments[index].time + Number(offsetFrames || 0) * analysis.frameDuration),
           path: ready.path,
           name: ready.name,
-          peakOffset: soundPeakOffset(ready),
+          peakOffset: soundPeakOffset(isResolve ? sound : ready),
           gainDb: Number(gainDb),
+          channels: ready.channels,
+          sourceId: ready.id,
         });
       }
       busy = "placing";
@@ -188,7 +193,7 @@
   <div class="sheet-scrim sfx-scrim" role="presentation" onclick={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
     <div bind:this={dialog} class="bottom-sheet sfx-sheet" role="dialog" aria-modal="true" aria-label="SFX Assistant" tabindex="-1">
       <header class="sheet-header sfx-sheet-header">
-        <div><strong><Icon name="sparkles" size={17} /> SFX Assistant</strong><small>Match sound to motion in the active composition</small></div>
+        <div><strong><Icon name="sparkles" size={17} /> SFX Assistant</strong><small>Match sound to {isResolve ? "edits in the active timeline" : "motion in the active composition"}</small></div>
         <button class="sfx-icon-button" type="button" aria-label="Close SFX Assistant" title="Close SFX Assistant" disabled={!!busy} onclick={onClose}><Icon name="close" size={15} /></button>
       </header>
       <div class="sheet-body sfx-sheet-body">
@@ -198,7 +203,7 @@
             <small>Choose how motion becomes sound cues</small>
           </div>
           <div class="sfx-options" aria-label="Analysis options">
-            <label><span>Scope</span><select bind:value={scope} title="Choose which AE layers to analyze" onchange={() => analysis = null}><option value="selected">Selected layers</option><option value="comp">Entire composition</option><option value="workarea">Work area</option></select></label>
+            <label><span>Scope</span><select bind:value={scope} title={isResolve ? "Choose timeline analysis scope" : "Choose which AE layers to analyze"} onchange={() => analysis = null}><option value="selected">{isResolve ? "Timeline markers" : "Selected layers"}</option><option value="comp">{isResolve ? "Entire timeline" : "Entire composition"}</option>{#if !isResolve}<option value="workarea">Work area</option>{/if}</select></label>
             <label><span>Density</span><select bind:value={density} title="Choose how many motion moments to detect" onchange={() => analysis = null}><option value="sparse">Sparse</option><option value="balanced">Balanced</option><option value="detailed">Detailed</option></select></label>
             <label><span>Style</span><select bind:value={style} title="Prefer matching sound names and tags" onchange={() => analysis = null}><option value="mixed">Mixed</option><option value="clean">Clean</option><option value="organic">Organic</option><option value="digital">Digital</option></select></label>
             <label><span>Intensity</span><select bind:value={intensity} title="Prefer soft or strong sounds" onchange={() => analysis = null}><option value="soft">Soft</option><option value="medium">Medium</option><option value="strong">Strong</option></select></label>

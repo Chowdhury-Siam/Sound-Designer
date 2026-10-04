@@ -3,6 +3,8 @@ import { fs, path } from "../lib/cep/node";
 import { csi } from "../lib/utils/bolt";
 import { normalizeDialogPath } from "./library";
 import type { LabelColor, LibraryFolder, LibraryTreeNode, SoundFile } from "./types";
+import { platform } from "../platform/client";
+import { nativePathKey } from "../platform/nativePaths";
 
 type SoundMetadata = {
   favoriteCollection?: string;
@@ -42,13 +44,17 @@ export const loadCloudFavorites = (): SoundFile[] => Object.values(loadDocument(
 const STORAGE_DIRECTORY = "SoundDesigner";
 const STORAGE_FILE = "library-metadata.json";
 const BROWSER_KEY = "sounddesigner.library-metadata.v1";
+const LEGACY_KEY = "sounddesigner.resolve.library-metadata.v1";
+const MIGRATION_KEY = "sounddesigner.resolve.library-metadata-migrated.v1";
 const EMPTY_DOCUMENT = (): MetadataDocument => ({ version: 1, sounds: {}, folders: {}, updatedAt: 0 });
 let documentCache: MetadataDocument | null = null;
 let saveTimer = 0;
+let metadataDirty = false;
+let legacyDocument: MetadataDocument | null = null;
 
 const nativeKey = (nativePath: string) => {
-  const normalized = normalizeDialogPath(nativePath).replace(/[\\/]+$/, "");
-  return path && path.sep === "\\" ? normalized.toLowerCase() : normalized;
+  const normalized = normalizeDialogPath(nativePath);
+  return nativePathKey(normalized, Boolean(path && path.sep === "\\") || /^[A-Za-z]:[\\/]|^\\\\/.test(normalized));
 };
 
 const soundKey = (sound: Pick<SoundFile, "path" | "source" | "sourceId" | "id">) =>
@@ -72,10 +78,18 @@ const metadataPath = () => {
 const sanitizeDocument = (value: unknown): MetadataDocument => {
   if (!value || typeof value !== "object") return EMPTY_DOCUMENT();
   const candidate = value as Partial<MetadataDocument>;
+  const sounds: Record<string, SoundMetadata> = {};
+  for (const [key, entry] of Object.entries(candidate.sounds || {})) {
+    const canonical = key.startsWith("file:") ? `file:${nativeKey(key.slice(5))}`
+      : /^(scorpion|freesound):/.test(key) ? `source:${key}` : key;
+    sounds[canonical] = { ...sounds[canonical], ...entry, ...(canonical !== key ? candidate.sounds?.[canonical] : {}) };
+    if (sounds[canonical].waveformFingerprint) sounds[canonical].waveformFingerprint = sounds[canonical].waveformFingerprint!.normalize("NFC");
+  }
   return {
     version: 1,
-    sounds: candidate.sounds && typeof candidate.sounds === "object" ? candidate.sounds : {},
-    folders: candidate.folders && typeof candidate.folders === "object" ? candidate.folders : {},
+    sounds,
+    folders: candidate.folders && typeof candidate.folders === "object"
+      ? Object.fromEntries(Object.entries(candidate.folders).map(([key, entry]) => [nativeKey(key), entry])) : {},
     collections: candidate.collections,
     updatedAt: Number(candidate.updatedAt) || 0,
   };
@@ -95,15 +109,30 @@ const loadDocument = () => {
   } catch (_error) {
     documentCache = EMPTY_DOCUMENT();
   }
+  if (platform().mode === "resolve") {
+    try {
+      if (!localStorage.getItem(MIGRATION_KEY) && localStorage.getItem(LEGACY_KEY)) {
+        legacyDocument = sanitizeDocument(JSON.parse(localStorage.getItem(LEGACY_KEY)!));
+        documentCache = {
+          ...documentCache,
+          sounds: { ...legacyDocument.sounds, ...documentCache.sounds },
+          folders: { ...legacyDocument.folders, ...documentCache.folders },
+          collections: documentCache.collections || legacyDocument.collections,
+        };
+      }
+    } catch (_error) { /* Keep malformed legacy data untouched. */ }
+  }
   return documentCache;
 };
 
 export const flushLibraryMetadata = () => {
   if (saveTimer) window.clearTimeout(saveTimer);
   saveTimer = 0;
-  if (!documentCache) return;
+  if (!documentCache || !metadataDirty) return;
+  metadataDirty = false;
   documentCache.updatedAt = Date.now();
   const serialized = JSON.stringify(documentCache);
+  if (platform().capabilities.nativeStorage) void platform().storage.saveLibraryMetadata(documentCache);
   const filePath = metadataPath();
   if (filePath && typeof fs.writeFileSync === "function") {
     const directory = path.dirname(filePath);
@@ -125,7 +154,39 @@ export const flushLibraryMetadata = () => {
   try { localStorage.setItem(BROWSER_KEY, serialized); } catch (_error) {}
 };
 
+export const loadPortableLibraryMetadata = async () => {
+  if (!platform().capabilities.nativeStorage) return;
+  if (metadataDirty) return;
+  const local = loadDocument();
+  const result = await platform().storage.getLibraryMetadata();
+  if (!result.ok || metadataDirty) return;
+  if (result.data) {
+    const portable = sanitizeDocument(result.data);
+    if (legacyDocument) {
+      portable.sounds = { ...legacyDocument.sounds, ...portable.sounds };
+      portable.folders = { ...legacyDocument.folders, ...portable.folders };
+      portable.collections = [...new Map([...(legacyDocument.collections || []), ...(portable.collections || [])].map(item => [item.id, item])).values()];
+    }
+    for (const [key, entry] of Object.entries(local.sounds)) {
+      if (!entry.waveform?.length) continue;
+      portable.sounds[key] = { ...portable.sounds[key], waveform: entry.waveform, waveformFingerprint: entry.waveformFingerprint };
+    }
+    documentCache = portable;
+  }
+  const rawSounds = (result.data as Partial<MetadataDocument> | null)?.sounds || {};
+  if (!result.data || legacyDocument || Object.keys(rawSounds).some(key => /^(scorpion|freesound):/.test(key))) {
+    const saved = await platform().storage.saveLibraryMetadata(documentCache!);
+    if (!saved.ok) return;
+    if (legacyDocument) {
+      try { localStorage.setItem(MIGRATION_KEY, "true"); } catch (_error) {}
+      legacyDocument = null;
+    }
+  }
+  try { localStorage.setItem(BROWSER_KEY, JSON.stringify(documentCache)); } catch (_error) {}
+};
+
 const scheduleSave = () => {
+  metadataDirty = true;
   if (saveTimer) window.clearTimeout(saveTimer);
   saveTimer = window.setTimeout(flushLibraryMetadata, 700);
 };
@@ -134,8 +195,8 @@ const hydrateNode = (node: LibraryTreeNode): LibraryTreeNode => {
   const stored = loadDocument().folders[nativeKey(node.path)];
   return {
     ...node,
-    labelColor: stored?.labelColor,
-    pinned: stored?.pinned === true,
+    labelColor: stored ? stored.labelColor : node.labelColor,
+    pinned: stored ? stored.pinned === true : node.pinned,
     children: node.children.map(hydrateNode),
   };
 };
@@ -151,11 +212,11 @@ export const hydrateLibraryMetadata = (folders: LibraryFolder[], sounds: SoundFi
       : null;
     return {
       ...sound,
-      favorite: stored?.favorite === true,
+      favorite: typeof stored?.favorite === "boolean" ? stored.favorite : sound.favorite,
       favoriteCollection: stored?.favoriteCollection || "",
-      labelColor: stored?.labelColor,
+      labelColor: stored ? stored.labelColor : sound.labelColor,
       waveform: cachedWaveform || sound.waveform,
-      waveformReal: Boolean(cachedWaveform),
+      waveformReal: Boolean(cachedWaveform) || sound.waveformReal === true,
     };
   }),
 });

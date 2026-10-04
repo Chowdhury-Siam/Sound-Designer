@@ -1,4 +1,5 @@
 import { https } from "../lib/cep/node";
+import { platform } from "../platform/client";
 import { makeWaveform } from "./library";
 import type { FreesoundLicenseFilter, SoundFile } from "./types";
 
@@ -125,6 +126,18 @@ const requestJsonWithNode = (url: string, apiKey: string, signal?: AbortSignal):
   });
 
 const requestJson = async (url: string, apiKey: string, signal?: AbortSignal) => {
+  if (platform().capabilities.nativeCloud) {
+    const operationId = globalThis.crypto.randomUUID();
+    const cancel = () => { void platform().cloud.cancel(operationId); };
+    if (signal?.aborted) throw new DOMException("Search cancelled.", "AbortError");
+    signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      const result = await platform().cloud.searchFreesound({ operationId, url, apiKey });
+      if (signal?.aborted) throw new DOMException("Search cancelled.", "AbortError");
+      if (!result.ok) throw new Error(result.error.message);
+      return result.data;
+    } finally { signal?.removeEventListener("abort", cancel); }
+  }
   if (window.cep) return requestJsonWithNode(url, apiKey, signal);
   const response = await fetch(url, {
     headers: { Accept: "application/json", Authorization: `Token ${apiKey}` },

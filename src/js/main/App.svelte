@@ -22,7 +22,8 @@ import { isCloudSound } from "./cloudLibrary";
     organizeAudioInHost,
     type AfterEffectsAudioDragState,
   } from "./hostBridge";
-  import { csi, openLinkInBrowser } from "../lib/utils/bolt";
+  import { platform } from "../platform/client";
+  import type { PlatformLibrarySnapshot, PlatformPortablePreferences, PlatformStorageInfo } from "../platform/types";
   import { compactWaveformFromChannels, decodeAudioWaveformChannels, decodeRemoteAudioWaveformChannels, renderProcessedPreview } from "./audioWaveform";
   import { audioNormalizationKey, audioProcessingKey, DEFAULT_AUDIO_PROCESSING, hasAudioProcessing, normalizeAudioProcessing, normalizeTargetDb } from "./audioEffects";
   import { searchSoundSources, loadCloudEnabled, saveCloudEnabled, resolveCloudPreview } from "./cloudLibrary";
@@ -30,7 +31,7 @@ import { isCloudSound } from "./cloudLibrary";
   import { createLibraryTabs, createSearchTab, searchTabLabel, updateSearchTabFolder, updateSearchTabQuery } from "./searchTabs";
   import { checkForUpdates, dismissUpdate, INSTALLED_VERSION, isUpdateDismissed, type UpdateState } from "./updater";
   import { labelColorOrder } from "./labels";
-  import { flushLibraryMetadata, hydrateLibraryMetadata, saveFolderMetadata, saveSoundMetadata, loadFavoriteCollections, saveFavoriteCollections, loadCloudFavorites, type FavoriteCollection } from "./libraryMetadata";
+  import { flushLibraryMetadata, hydrateLibraryMetadata, loadPortableLibraryMetadata, saveFolderMetadata, saveSoundMetadata, loadFavoriteCollections, saveFavoriteCollections, loadCloudFavorites, type FavoriteCollection } from "./libraryMetadata";
   import FavoriteSheet from "./components/FavoriteSheet.svelte";
   import type {
     AudioConversionPolicy,
@@ -234,7 +235,7 @@ import { isCloudSound } from "./cloudLibrary";
         conversionPolicy: nextConversionPolicy,
         normalization: nextNormalization,
         normalizationTargetDb: normalizeTargetDb(nextNormalizationTargetDb),
-        freesoundApiKey: nextFreesoundApiKey,
+        freesoundApiKey: credentialsReady && platform().capabilities.nativeStorage ? undefined : nextFreesoundApiKey,
         freesoundLicenseFilter: nextFreesoundLicenseFilter,
       }));
     } catch (_error) {
@@ -244,6 +245,21 @@ import { isCloudSound } from "./cloudLibrary";
 
   const preferences = loadPreferences();
   const host = detectHost();
+  let alwaysOnTop = $state(false);
+  onMount(() => {
+    const runtime = platform().runtime;
+    if (!runtime.setAlwaysOnTop) return;
+    try { alwaysOnTop = localStorage.getItem("sounddesigner.always-on-top.v1") === "true"; } catch (_error) {}
+    void runtime.setAlwaysOnTop(alwaysOnTop).then(result => { if (!result.ok) notify("warning", result.error.message); });
+  });
+  const toggleAlwaysOnTop = async () => {
+    const result = await platform().runtime.setAlwaysOnTop?.(!alwaysOnTop);
+    if (!result) return;
+    if (!result.ok) { notify("error", result.error.message); return; }
+    alwaysOnTop = result.data.alwaysOnTop;
+    try { localStorage.setItem("sounddesigner.always-on-top.v1", String(alwaysOnTop)); } catch (_error) {}
+  };
+  onMount(() => platform().library.onScanProgress?.((progress) => { indexProgress = progress; }));
   const browserDemoRequested = import.meta.env.DEV && host === "browser" && new URLSearchParams(window.location.search).has("demo");
   const browserDemoAudio = browserDemoRequested ? createBrowserDemoAudio() : null;
   const browserDemoSound: SoundFile | null = browserDemoAudio ? {
@@ -322,6 +338,9 @@ import { isCloudSound } from "./cloudLibrary";
     try { for (const [key, value] of Object.entries(values)) localStorage.setItem(`sounddesigner.browse.${key}`, value); } catch (_) {}
   });
   let settingsOpen = $state(false);
+  let storageInfo = $state<PlatformStorageInfo | null>(null);
+  let storageBusy = $state(false);
+  let portablePreferencesReady = $state(!platform().capabilities.nativeStorage);
   let sfxAssistantOpen = $state(false);
   let settingsFolderId = $state<string | null>(null);
   let autoPreview = $state(preferences.autoPreview);
@@ -329,6 +348,40 @@ import { isCloudSound } from "./cloudLibrary";
   let normalization = $state<AudioNormalization>(preferences.normalization);
   let normalizationTargetDb = $state(preferences.normalizationTargetDb);
   let freesoundApiKey = $state(preferences.freesoundApiKey);
+  let credentialsReady = $state(!platform().capabilities.nativeStorage);
+  let credentialWritePending = false;
+  let credentialRevision = 0;
+  const refreshFreesoundApiKey = async () => {
+    if (!platform().capabilities.nativeStorage || credentialWritePending) return;
+    const revision = ++credentialRevision;
+    const result = await platform().storage.getFreesoundApiKey(credentialsReady ? "" : preferences.freesoundApiKey);
+    if (revision !== credentialRevision) return;
+    if (!result.ok) { notify("error", result.error.message); return; }
+    freesoundApiKey = result.data;
+    credentialsReady = true;
+  };
+  const saveFreesoundApiKey = async (value: string) => {
+    if (!platform().capabilities.nativeStorage) { freesoundApiKey = value.trim(); return; }
+    credentialRevision += 1;
+    credentialWritePending = true;
+    try {
+      const result = await platform().storage.saveFreesoundApiKey(value);
+      if (!result.ok) { notify("error", result.error.message); return; }
+      freesoundApiKey = value.trim();
+      credentialsReady = true;
+    } finally { credentialWritePending = false; }
+  };
+  onMount(() => {
+    void refreshFreesoundApiKey();
+    const refresh = () => { if (!document.hidden) void refreshFreesoundApiKey(); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      credentialRevision += 1;
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  });
   let freesoundLicenseFilter = $state<FreesoundLicenseFilter>(preferences.freesoundLicenseFilter);
   let toasts = $state<ToastMessage[]>([]);
   let soundPreparation = $state<Record<string, AudioPreparationStatus | undefined>>({});
@@ -383,6 +436,7 @@ import { isCloudSound } from "./cloudLibrary";
   };
   $effect(() => { if (!hoverPreview) untrack(stopHover); });
   onMount(() => () => stopHover());
+  onMount(() => platform().audio.onDragError((error) => notify("error", error.message)));
   let audioPreviewScope: AudioSegmentSelection | null = null;
   let audioUsesProcessedPreview = false;
   let audioSoundId = "";
@@ -747,13 +801,68 @@ import { isCloudSound } from "./cloudLibrary";
     notify(next.status === "available" ? "success" : next.status === "error" ? "warning" : "info", next.message || "Update check finished.");
   };
 
+  const portablePreferences = (): PlatformPortablePreferences => ({
+    autoPreview,
+    loop,
+    localSourceEnabled,
+    cloudLibraryEnabled,
+    freesoundLibraryEnabled,
+    freesoundSourceEnabled,
+    insertionTarget,
+    conversionPolicy,
+    normalization,
+    normalizationTargetDb,
+    freesoundLicenseFilter,
+  });
+
+  const applyPortablePreferences = (stored: PlatformPortablePreferences) => {
+    autoPreview = stored.autoPreview;
+    loop = stored.loop;
+    localSourceEnabled = stored.localSourceEnabled;
+    cloudLibraryEnabled = stored.cloudLibraryEnabled;
+    freesoundLibraryEnabled = stored.freesoundLibraryEnabled;
+    freesoundSourceEnabled = stored.freesoundSourceEnabled;
+    insertionTarget = stored.insertionTarget;
+    conversionPolicy = stored.conversionPolicy;
+    normalization = stored.normalization;
+    normalizationTargetDb = normalizeTargetDb(stored.normalizationTargetDb);
+    freesoundLicenseFilter = stored.freesoundLicenseFilter;
+  };
+
+  const changeStorageLocation = async () => {
+    if (storageBusy) return;
+    storageBusy = true;
+    try {
+      const result = await platform().storage.changeLocation();
+      if (!result.ok) { notify("error", result.error.message); return; }
+      if (!result.data) { notify("info", "Storage location was not changed."); return; }
+      storageInfo = result.data;
+      portablePreferencesReady = false;
+      const stored = await platform().storage.getPreferences();
+      if (stored.ok && stored.data) applyPortablePreferences(stored.data);
+      await loadPortableLibraryMetadata();
+      collections = loadFavoriteCollections();
+      savedCloudFavorites = loadCloudFavorites();
+      if (platform().capabilities.nativeLibrary) {
+        const library = await platform().library.getSnapshot();
+        if (library.ok) applyNativeLibrarySnapshot(library.data);
+        else notify("warning", library.error.message);
+      }
+      portablePreferencesReady = true;
+      if (stored.ok && !stored.data) await platform().storage.savePreferences(portablePreferences());
+      notify("success", "SoundDesigner storage location updated.");
+    } finally {
+      storageBusy = false;
+    }
+  };
+
   const openUpdate = () => {
     const url = updateState.downloadUrl || updateState.releaseUrl;
     if (!url) {
       notify("warning", "No trusted GitHub release download is available yet.");
       return;
     }
-    openLinkInBrowser(url);
+    void platform().runtime.openExternal(url);
   };
 
   const dismissAvailableUpdate = () => {
@@ -800,7 +909,7 @@ import { isCloudSound } from "./cloudLibrary";
     cancelSegmentPreparation();
     window.clearTimeout(processingPreparationTimer);
     const activeSelection = segmentSelection ? { ...segmentSelection } : null;
-    if (activeSelection && window.cep && host !== "browser") {
+    if (activeSelection && (window.cep || platform().capabilities.nativeAudioPreparation) && host !== "browser") {
       processingPreparationTimer = window.setTimeout(() => prepareSelectedSegment(activeSelection, false), 320);
     }
   };
@@ -818,6 +927,16 @@ import { isCloudSound } from "./cloudLibrary";
     freesoundApiKey,
     freesoundLicenseFilter,
   ));
+  $effect(() => {
+    if (!portablePreferencesReady || !platform().capabilities.nativeStorage) return;
+    const value = portablePreferences();
+    const timer = window.setTimeout(() => {
+      void platform().storage.savePreferences(value).then((result) => {
+        if (!result.ok) notify("warning", result.error.message);
+      });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  });
   $effect(() => { if (audio) audio.loop = loop && (audioUsesProcessedPreview || !segmentSelection); });
   $effect(() => {
     const current = selected;
@@ -1235,6 +1354,50 @@ import { isCloudSound } from "./cloudLibrary";
   });
 
   onMount(() => {
+    if (!platform().capabilities.nativeStorage) return;
+    let cancelled = false;
+    let refreshing = false;
+    const refreshPortableState = async (allowSetup = false) => {
+      if (refreshing) return;
+      refreshing = true;
+      let info = await platform().storage.getInfo();
+      if (allowSetup && !info.ok && info.error.code === "STORAGE_NOT_CONFIGURED") {
+        const selected = await platform().storage.changeLocation();
+        if (!selected.ok) { if (!cancelled) notify("warning", selected.error.message); refreshing = false; return; }
+        if (!selected.data) { if (!cancelled) notify("info", "Portable storage setup was cancelled. Choose a folder in Settings when ready."); refreshing = false; return; }
+        info = { ok: true, data: selected.data };
+      }
+      if (!info.ok) { if (allowSetup && !cancelled) notify("warning", info.error.message); refreshing = false; return; }
+      if (cancelled) { refreshing = false; return; }
+      storageInfo = info.data;
+      portablePreferencesReady = false;
+      await loadPortableLibraryMetadata();
+      if (cancelled) { refreshing = false; return; }
+      collections = loadFavoriteCollections();
+      savedCloudFavorites = loadCloudFavorites();
+      if (platform().capabilities.nativeLibrary) {
+        const hydrated = hydrateLibraryMetadata(folders, sounds);
+        folders = hydrated.folders;
+        sounds = hydrated.sounds;
+      }
+      const stored = await platform().storage.getPreferences();
+      if (cancelled) { refreshing = false; return; }
+      if (stored.ok && stored.data) applyPortablePreferences(stored.data);
+      portablePreferencesReady = true;
+      refreshing = false;
+    };
+    const refreshWhenVisible = () => { if (!document.hidden) void refreshPortableState(); };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    void refreshPortableState(true);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  });
+
+  onMount(() => {
     const flush = () => flushLibraryMetadata();
     window.addEventListener("beforeunload", flush);
     return () => {
@@ -1280,7 +1443,7 @@ import { isCloudSound } from "./cloudLibrary";
   });
 
   onMount(() => {
-    if (!window.cep) return;
+    if (!window.cep && !platform().capabilities.nativeProjectHandoff) return;
     let cancelled = false;
     const refreshProject = async () => {
       const context = await getHostProjectContext();
@@ -1393,13 +1556,13 @@ import { isCloudSound } from "./cloudLibrary";
     // text fields still opt out below so typing remains native.
     try {
       if ("cep" in window) {
-        csi.registerKeyEventsInterest(JSON.stringify([{
+        platform().runtime.registerKeyEventsInterest([{
           keyCode: 32,
           ctrlKey: false,
           altKey: false,
           shiftKey: false,
           metaKey: false,
-        }]));
+        }]);
       }
     } catch (_error) {
       // Browser preview and older CEP shells keep the DOM fallback below.
@@ -1451,6 +1614,32 @@ import { isCloudSound } from "./cloudLibrary";
   });
 
   onMount(() => {
+    if (platform().capabilities.nativeLibrary) {
+      let cancelled = false;
+      let refreshing = false;
+      const refresh = () => {
+        if (refreshing) return;
+        refreshing = true;
+        platform().library.getSnapshot().then((result) => {
+          refreshing = false;
+          if (cancelled) return;
+          if (!result.ok) {
+            notify("error", result.error.message);
+            return;
+          }
+          applyNativeLibrarySnapshot(result.data);
+        });
+      };
+      const refreshWhenVisible = () => { if (!document.hidden) refresh(); };
+      window.addEventListener("focus", refreshWhenVisible);
+      document.addEventListener("visibilitychange", refreshWhenVisible);
+      refresh();
+      return () => {
+        cancelled = true;
+        window.removeEventListener("focus", refreshWhenVisible);
+        document.removeEventListener("visibilitychange", refreshWhenVisible);
+      };
+    }
     if (!window.cep) return;
     let cancelled = false;
     const restore = async () => {
@@ -1563,7 +1752,7 @@ import { isCloudSound } from "./cloudLibrary";
   const prepareSelectedSegment = async (selection: AudioSegmentSelection, announceErrors = true) => {
     const sound = selected;
     if (!sound) return null;
-    if (!window.cep || host === "browser") return null;
+    if ((!window.cep && !platform().capabilities.nativeAudioPreparation) || host === "browser") return null;
     const requestKey = segmentRequestKey(sound, selection);
     if (activeSegmentPreparation && activeSegmentPreparationKey === requestKey) {
       try {
@@ -1637,7 +1826,7 @@ import { isCloudSound } from "./cloudLibrary";
     preparedSegment = null;
     if (!next) return;
     if (selected?.duration) seek(next.start / selected.duration);
-    if (commit && window.cep && host !== "browser") prepareSelectedSegment(next, false);
+    if (commit && (window.cep || platform().capabilities.nativeAudioPreparation) && host !== "browser") prepareSelectedSegment(next, false);
   };
 
   const selectSound = (id: string) => {
@@ -1676,6 +1865,17 @@ import { isCloudSound } from "./cloudLibrary";
     }
   };
 
+  const applyNativeLibrarySnapshot = (snapshot: PlatformLibrarySnapshot) => {
+    const hydrated = hydrateLibraryMetadata(snapshot.folders, snapshot.sounds);
+    folders = hydrated.folders;
+    sounds = hydrated.sounds;
+    if (selectedId && !sounds.some((sound) => sound.id === selectedId)) selectedId = "";
+    if (!folders.length) {
+      tabs = createLibraryTabs();
+      activeTabId = "search-library";
+    }
+  };
+
   const toggleFavorite = (sound: SoundFile) => {
     stopHover();
     favoriteEditing = sound;
@@ -1685,6 +1885,11 @@ import { isCloudSound } from "./cloudLibrary";
     const current = sounds.find(item => item.id === sound.id) || freesoundSounds.find(item => item.id === sound.id) || sound;
     const next = { ...current, favorite, favoriteCollection: destination };
     updateSoundRecord(next);
+    if (platform().capabilities.nativeLibrary && !isCloudSound(next)) {
+      void platform().library.setSoundFavorite(next.id, favorite).then((result) => {
+        if (!result.ok) notify("error", result.error.message);
+      });
+    }
     saveSoundMetadata(next, { favorite, favoriteCollection: destination });
     if (isCloudSound(next)) savedCloudFavorites = [...savedCloudFavorites.filter(item => item.id !== next.id), ...(favorite ? [next] : [])];
     favoriteEditing = null;
@@ -1703,6 +1908,11 @@ import { isCloudSound } from "./cloudLibrary";
   const updateSoundLabel = (sound: SoundFile, color?: LabelColor) => {
     const next = { ...sound, labelColor: color };
     updateSoundRecord(next);
+    if (platform().capabilities.nativeLibrary && !isCloudSound(next)) {
+      void platform().library.setSoundLabel(next.id, color).then((result) => {
+        if (!result.ok) notify("error", result.error.message);
+      });
+    }
     saveSoundMetadata(next, color ? { labelColor: color } : { clearLabel: true });
   };
 
@@ -1715,12 +1925,22 @@ import { isCloudSound } from "./cloudLibrary";
 
   const updateFolderLabel = (node: LibraryFolder["tree"], color?: LabelColor) => {
     updateFolderNode(node.id, (current) => ({ ...current, labelColor: color }));
+    if (platform().capabilities.nativeLibrary) {
+      void platform().library.setFolderLabel(node.id, color).then((result) => {
+        if (!result.ok) notify("error", result.error.message);
+      });
+    }
     saveFolderMetadata(node.path, color ? { labelColor: color } : { clearLabel: true });
   };
 
   const toggleFolderPinned = (node: LibraryFolder["tree"]) => {
     const pinned = !node.pinned;
     updateFolderNode(node.id, (current) => ({ ...current, pinned }));
+    if (platform().capabilities.nativeLibrary) {
+      void platform().library.setFolderPinned(node.id, pinned).then((result) => {
+        if (!result.ok) notify("error", result.error.message);
+      });
+    }
     saveFolderMetadata(node.path, { pinned });
     notify("info", pinned ? `${node.name} pinned to the top of Library.` : `${node.name} unpinned.`);
   };
@@ -1768,12 +1988,13 @@ import { isCloudSound } from "./cloudLibrary";
         project = await getHostProjectContext();
         if (project.ok && project.projectPath === sound.preparedProjectPath) return sound;
       }
-      const needsPreparation = requiresProjectAudioPreparation(sound, requestedConversionPolicy, requestedNormalization, requestedProcessing, requestedNormalizationTargetDb);
+      const needsPreparation = (host === "resolve" && sound.extension.toLowerCase() !== "wav")
+        || requiresProjectAudioPreparation(sound, requestedConversionPolicy, requestedNormalization, requestedProcessing, requestedNormalizationTargetDb);
       if (!needsPreparation && !sound.originalPath) return sound;
       updatePreparationStatus(
         sound,
         isCloudSound(sound) && !sound.path ? "downloading" : "converting",
-        isCloudSound(sound) && !sound.path ? `Preparing ${sound.name}…` : `Preparing ${sound.name} for Adobe…`,
+        isCloudSound(sound) && !sound.path ? `Preparing ${sound.name}…` : `Preparing ${sound.name} for ${hostLabel(host)}…`,
       );
       updateSoundRecord({ ...sound, downloadState: isCloudSound(sound) ? "downloading" : sound.downloadState });
       try {
@@ -1814,6 +2035,27 @@ import { isCloudSound } from "./cloudLibrary";
     }
   };
 
+  // Prepare selected local audio after controls settle, before the drag gesture.
+  // Cloud downloads still start only on an explicit handoff.
+  $effect(() => {
+    const current = selected;
+    if (host !== "resolve" || !current?.path || isCloudSound(current)) return;
+    if (current.extension.toLowerCase() === "wav" && !requiresProjectAudioPreparation(current, conversionPolicy, normalization, processing, normalizationTargetDb)) return;
+    const timer = window.setTimeout(() => { void prepareSound(current).catch(() => undefined); }, 250);
+    return () => window.clearTimeout(timer);
+  });
+
+  const prepareAssistantSound = async (sound: SoundFile, gainDb?: number) => {
+    if (host !== "resolve") return prepareSound(sound, true);
+    const project = await getHostProjectContext();
+    if (!project.ok) throw new Error(project.message);
+    const prepared = await prepareAudioForHost(sound, {
+      host, project, conversionPolicy: "always", normalization, normalizationTargetDb,
+      processing: normalizeAudioProcessing({ ...DEFAULT_AUDIO_PROCESSING, gainDb: gainDb ?? 0 }),
+    });
+    return prepared.sound;
+  };
+
   const loadMoreFreesound = async () => {
     const query = activeTab?.query.trim() || "";
     if (!cloudSourceActive || !freesoundHasNext || freesoundStatus === "loading" || query.length < 2) return;
@@ -1842,6 +2084,21 @@ import { isCloudSound } from "./cloudLibrary";
   };
 
   const addFolder = async () => {
+    if (platform().capabilities.nativeLibrary) {
+      isIndexing = true;
+      try {
+        const result = await platform().library.addFolder();
+        if (!result.ok) throw new Error(result.error.message);
+        if (!result.data) { notify("info", "No folder was selected."); return; }
+        applyNativeLibrarySnapshot(result.data);
+        notify("success", `Library updated - ${result.data.sounds.length} sounds indexed.`);
+      } catch (error) {
+        notify("error", error instanceof Error ? error.message : "The folder could not be indexed.");
+      } finally {
+        isIndexing = false;
+      }
+      return;
+    }
     notify("info", "Choose a folder. Windows hides files while selecting folders.");
     await waitForPanelPaint();
     let chosen: string | null = null;
@@ -1898,6 +2155,20 @@ import { isCloudSound } from "./cloudLibrary";
 
   const rescanAll = async () => {
     if (!folders.length) { notify("info", "Add a sound folder to start indexing."); return; }
+    if (platform().capabilities.nativeLibrary) {
+      isIndexing = true;
+      try {
+        const result = await platform().library.rescan();
+        if (!result.ok) throw new Error(result.error.message);
+        applyNativeLibrarySnapshot(result.data);
+        notify("success", `Library refreshed - ${result.data.sounds.length} sounds.`);
+      } catch (error) {
+        notify("error", error instanceof Error ? error.message : "The sound libraries could not be refreshed.");
+      } finally {
+        isIndexing = false;
+      }
+      return;
+    }
     isIndexing = true;
     indexProgress = { files: 0, folders: 0, currentPath: "" };
     notify("info", "Refreshing sound libraries…");
@@ -1950,7 +2221,12 @@ import { isCloudSound } from "./cloudLibrary";
   };
 
   const insertPreparedInHost = async (prepared: SoundFile) => {
-    const result = await insertAudioInHost({ path: prepared.path, name: prepared.name, targetAudioTrack: -1, insertionTarget });
+    const context = await getHostProjectContext();
+    if (!context.ok || !context.projectPath) throw new Error(context.message);
+    if (prepared.preparedProjectPath && prepared.preparedProjectPath !== context.projectPath) {
+      throw new Error(`The active ${hostLabel(host)} project changed. Prepare the sound again for the current project.`);
+    }
+    const result = await insertAudioInHost({ path: prepared.path, name: prepared.name, targetAudioTrack: -1, insertionTarget, channelMode: prepared.channels === 1 ? "mono" : "stereo", projectPath: context.projectPath });
     notify(result.ok ? "success" : "error", result.message);
   };
 
@@ -1997,8 +2273,17 @@ import { isCloudSound } from "./cloudLibrary";
     notify("info", isCloudSound(removed) ? "Removed from these cloud results. Downloaded project files were kept." : "Removed from the search index. The source file was kept.");
   };
 
-  const deleteSettingsFolder = () => {
+  const deleteSettingsFolder = async () => {
     if (!settingsFolder) return;
+    if (platform().capabilities.nativeLibrary) {
+      const deletedName = settingsFolder.name;
+      const result = await platform().library.removeFolder(settingsFolder.id);
+      if (!result.ok) { notify("error", result.error.message); return; }
+      applyNativeLibrarySnapshot(result.data);
+      settingsOpen = false;
+      notify("info", `${deletedName} removed from SoundDesigner. Files were kept.`);
+      return;
+    }
     const deletedName = settingsFolder.name;
     const deletedTree = settingsFolder.tree;
     const deletedFolderId = settingsFolder.id;
@@ -2040,7 +2325,7 @@ import { isCloudSound } from "./cloudLibrary";
 
   const prepareAfterEffectsDrag = (sound: SoundFile) => {
     if (host !== "aftereffects" || !sound.path) return;
-    const request = { path: sound.path, name: sound.name, targetAudioTrack: -1 };
+    const request = { path: sound.path, name: sound.name, targetAudioTrack: -1, projectPath: sound.preparedProjectPath || activeProjectPath };
     afterEffectsDragSession = {
       id: ++afterEffectsDragSessionId,
       soundId: sound.id,
@@ -2081,7 +2366,7 @@ import { isCloudSound } from "./cloudLibrary";
       if (host === "aftereffects") prepareAfterEffectsDrag(cached);
       return;
     }
-    if (requiresProjectAudioPreparation(sound, conversionPolicy, normalization, requestedProcessing, normalizationTargetDb)) {
+    if ((host === "resolve" && sound.extension.toLowerCase() !== "wav") || requiresProjectAudioPreparation(sound, conversionPolicy, normalization, requestedProcessing, normalizationTargetDb)) {
       startPreparationDrag(sound);
       return;
     }
@@ -2095,17 +2380,17 @@ import { isCloudSound } from "./cloudLibrary";
       dragSound(cached, event);
       return;
     }
-    if (requiresProjectAudioPreparation(sound, conversionPolicy, normalization, requestedProcessing, normalizationTargetDb)) {
+    if ((host === "resolve" && sound.extension.toLowerCase() !== "wav") || requiresProjectAudioPreparation(sound, conversionPolicy, normalization, requestedProcessing, normalizationTargetDb)) {
       const session = startPreparationDrag(sound);
       session.leftPanel = false;
       session.cancelled = false;
       if (event.dataTransfer) {
         event.dataTransfer.effectAllowed = "copy";
-        event.dataTransfer.setData("text/plain", `${sound.name} · preparing for Adobe`);
+        event.dataTransfer.setData("text/plain", `${sound.name} · preparing for ${hostLabel(host)}`);
       }
       if (!session.announced) {
         session.announced = true;
-        notify("info", `Preparing ${sound.name} · release over Adobe to insert automatically.`);
+        notify("info", `Preparing ${sound.name} · release over ${hostLabel(host)} to insert automatically.`);
       }
       return;
     }
@@ -2114,6 +2399,13 @@ import { isCloudSound } from "./cloudLibrary";
       preparationDragSession = null;
     }
     if (!sound.path || !event.dataTransfer) { event.preventDefault(); return; }
+    if (host === "resolve") {
+      event.preventDefault();
+      void platform().audio.startDrag({ path: sound.path, sourceId: sound.sourceId || sound.id, displayName: sound.name, projectPath: sound.preparedProjectPath || activeProjectPath }).then((result) => {
+        if (!result.ok) notify("error", result.error.message);
+      });
+      return;
+    }
     if (host === "aftereffects" && afterEffectsDragSession?.soundId !== sound.id) prepareAfterEffectsDrag(sound);
     if (afterEffectsDragSession?.soundId === sound.id) {
       afterEffectsDragSession.leftPanel = false;
@@ -2128,7 +2420,7 @@ import { isCloudSound } from "./cloudLibrary";
   };
 
   const organizeAudioAfterNativeDrop = async (sound: SoundFile) => {
-    const request = { path: sound.path, name: sound.name, targetAudioTrack: -1 };
+    const request = { path: sound.path, name: sound.name, targetAudioTrack: -1, projectPath: sound.preparedProjectPath || activeProjectPath };
     const retryDelays = [80, 160, 280, 450, 700];
     for (const delay of retryDelays) {
       await new Promise<void>((resolve) => window.setTimeout(resolve, delay));
@@ -2157,7 +2449,7 @@ import { isCloudSound } from "./cloudLibrary";
     const baseline = await session.baseline;
     await new Promise<void>((resolve) => window.setTimeout(resolve, 280));
     if (session.id !== afterEffectsDragSessionId) return;
-    const request = { path: sound.path, name: sound.name, targetAudioTrack: -1 };
+    const request = { path: sound.path, name: sound.name, targetAudioTrack: -1, projectPath: sound.preparedProjectPath || activeProjectPath };
     const current = await getAfterEffectsAudioDragState(request);
     const nativeLayerWasAdded = baseline.ok
       && current.ok
@@ -2252,7 +2544,8 @@ import { isCloudSound } from "./cloudLibrary";
     <IconButton icon="pin" label={sidebarPinned ? "Unpin library sidebar" : "Keep library sidebar visible"} onclick={toggleSidebarPin} active={sidebarPinned} pressed={sidebarPinned} />
     <div class="topbar-spacer"></div>
     <span class="host-pill tooltip" data-tooltip={`Connected to ${hostLabel(host)}`}><i></i>{hostLabel(host)}</span>
-    {#if host === "aftereffects"}<IconButton icon="sparkles" label="Open SFX Assistant" onclick={() => sfxAssistantOpen = true} active={sfxAssistantOpen} pressed={sfxAssistantOpen} />{/if}
+    {#if platform().runtime.setAlwaysOnTop}<IconButton icon="pin" label={alwaysOnTop ? "Unpin window" : "Keep window on top"} active={alwaysOnTop} pressed={alwaysOnTop} onclick={toggleAlwaysOnTop} />{/if}
+    {#if platform().capabilities.nativeSfxAssistant}<IconButton icon="sparkles" label="Open SFX Assistant" onclick={() => sfxAssistantOpen = true} active={sfxAssistantOpen} pressed={sfxAssistantOpen} />{/if}
     <IconButton icon="activity" label="Open library status" active={!isIndexing} onclick={() => sidebarOpen = true} />
     <IconButton icon="settings" label="Open panel settings" onclick={() => { settingsFolderId = null; settingsOpen = true; }} />
   </header>
@@ -2556,7 +2849,7 @@ import { isCloudSound } from "./cloudLibrary";
   {/if}
 
   <SettingsSheet
-    open={settingsOpen} folder={settingsFolder} {autoPreview} {loop} {insertionTarget} {conversionPolicy} {normalization} {normalizationTargetDb} {freesoundLibraryEnabled} {freesoundApiKey} {freesoundLicenseFilter} update={updateState}
+    open={settingsOpen} folder={settingsFolder} {autoPreview} {loop} {insertionTarget} {conversionPolicy} {normalization} {normalizationTargetDb} {freesoundLibraryEnabled} {freesoundApiKey} {freesoundLicenseFilter} storagePath={storageInfo?.root || ""} storageAvailable={platform().capabilities.nativeStorage} {storageBusy} update={updateState}
     onAutoPreview={(value) => autoPreview = value}
     onLoop={(value) => loop = value}
     onInsertionTarget={(value) => insertionTarget = value}
@@ -2573,13 +2866,14 @@ import { isCloudSound } from "./cloudLibrary";
       freesoundLibraryEnabled = enabled;
       freesoundSourceEnabled = enabled;
     }}
-    onFreesoundApiKey={(value) => freesoundApiKey = value}
+    onFreesoundApiKey={saveFreesoundApiKey}
     onFreesoundLicenseFilter={(value) => freesoundLicenseFilter = value}
-    onOpenFreesoundSetup={() => openLinkInBrowser("https://freesound.org/apiv2/apply/")}
-    onOpenFreesoundTerms={() => openLinkInBrowser("https://freesound.org/help/tos_api/")}
-    onBrowseFreesound={() => openLinkInBrowser("https://freesound.org/search/")}
+    onOpenFreesoundSetup={() => void platform().runtime.openExternal("https://freesound.org/apiv2/apply/")}
+    onOpenFreesoundTerms={() => void platform().runtime.openExternal("https://freesound.org/help/tos_api/")}
+    onBrowseFreesound={() => void platform().runtime.openExternal("https://freesound.org/search/")}
     onCheckUpdate={refreshUpdates}
     onOpenUpdate={openUpdate}
+    onChangeStorage={changeStorageLocation}
     onClose={() => settingsOpen = false}
     onDelete={deleteSettingsFolder}
   />
@@ -2587,7 +2881,7 @@ import { isCloudSound } from "./cloudLibrary";
     open={sfxAssistantOpen} {sounds} {folders} cloudEnabled={cloudLibraryEnabled}
     onClose={() => sfxAssistantOpen = false}
     onStopPreview={stopPlayback}
-    onPrepareRemote={(sound) => prepareSound(sound, true)}
+    onPrepareRemote={prepareAssistantSound}
     onNotice={notify}
   />
   <FavoriteSheet sound={favoriteEditing} {collections} onSave={saveFavorite} onCreate={createCollection} onClose={() => favoriteEditing = null} />

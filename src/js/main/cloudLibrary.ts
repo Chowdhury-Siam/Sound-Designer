@@ -1,4 +1,5 @@
 import { https } from "../lib/cep/node";
+import { platform } from "../platform/client";
 import type { FreesoundSearchPage } from "./freesound";
 import type { FreesoundLicenseFilter, SoundFile } from "./types";
 
@@ -79,10 +80,22 @@ const request = async (route: string, signal?: AbortSignal): Promise<unknown> =>
 };
 
 export const searchCloudLibrary = async (query: string, signal?: AbortSignal): Promise<SoundFile[]> => {
-  const response = await request(`/search.php?q=${encodeURIComponent(query.trim())}`, signal);
+  let response: unknown;
+  if (platform().capabilities.nativeCloud) {
+    const operationId = globalThis.crypto.randomUUID();
+    const cancel = () => { void platform().cloud.cancel(operationId); };
+    if (signal?.aborted) throw new DOMException("Search cancelled.", "AbortError");
+    signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      const result = await platform().cloud.search({ operationId, query: query.trim() });
+      if (signal?.aborted) throw new DOMException("Search cancelled.", "AbortError");
+      if (!result.ok) throw new Error(result.error.message);
+      response = result.data;
+    } finally { signal?.removeEventListener("abort", cancel); }
+  } else response = await request(`/search.php?q=${encodeURIComponent(query.trim())}`, signal);
   if (!Array.isArray(response)) throw new Error("Cloud library returned invalid search results.");
   return response.slice(0, 2000).flatMap((item): SoundFile[] => {
-    if (!item || !Number.isSafeInteger(Number(item.id)) || Number(item.id) < 1 || typeof item.name !== "string" || typeof item.preview_key !== "string") return [];
+    if (!item || !Number.isSafeInteger(Number(item.id)) || Number(item.id) < 1 || typeof item.name !== "string" || (!platform().capabilities.nativeCloud && typeof item.preview_key !== "string")) return [];
     return [{
       id: `scorpion-${item.id}`, source: "scorpion", sourceId: String(item.id),
       folderId: "scorpion", directoryId: "scorpion", name: item.name, path: "",
@@ -97,6 +110,20 @@ export const searchCloudLibrary = async (query: string, signal?: AbortSignal): P
 export const resolveCloudPreview = async (sound: SoundFile, signal?: AbortSignal) => {
   const cached = cloudPreviewCache.get(sound.sourceId || "");
   if (cached) return cached;
+  if (platform().capabilities.nativeCloud) {
+    const operationId = globalThis.crypto.randomUUID();
+    const cancel = () => { void platform().cloud.cancel(operationId); };
+    if (signal?.aborted) throw new DOMException("Preview cancelled.", "AbortError");
+    signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      const result = await platform().cloud.readPreview({ operationId, sourceId: sound.sourceId || "" });
+      if (signal?.aborted) throw new DOMException("Preview cancelled.", "AbortError");
+      if (!result.ok) throw new Error(result.error.message);
+      const url = URL.createObjectURL(new Blob([new Uint8Array(result.data)], { type: "audio/mpeg" }));
+      if (sound.sourceId) cloudPreviewCache.set(sound.sourceId, url);
+      return url;
+    } finally { signal?.removeEventListener("abort", cancel); }
+  }
   const response = await request(`/get_preview_url.php?id=${encodeURIComponent(sound.sourceId || "")}`, signal) as { preview_url?: unknown };
   if (typeof response.preview_url !== "string") throw new Error("This cloud preview is unavailable.");
   const url = new URL(response.preview_url);

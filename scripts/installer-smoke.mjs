@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import vm from "node:vm";
+import { distributionXml, componentScript, welcomeHtml, conclusionHtml } from "./macos-installer.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
@@ -12,31 +14,124 @@ const macBuilder = read("scripts/build-macos-installer.mjs");
 const packager = read("scripts/package-release.mjs");
 
 assert.equal(packageJson.scripts["installer:windows"], "node scripts/build-windows-installer.mjs");
+assert.equal(packageJson.scripts["installer:windows:build"], "bun run build:resolve && bun run release:package && cross-env SOUNDDESIGNER_INSTALLER_CANDIDATE=1 bun run installer:windows");
 assert.equal(packageJson.scripts["installer:macos"], "node scripts/build-macos-installer.mjs");
 assert.match(workflow, /runs-on: windows-latest/);
 assert.match(workflow, /runs-on: macos-latest/);
-assert.match(workflow, /branches:\s+- main/);
-assert.match(workflow, /startsWith\(github\.event\.head_commit\.message, '🚀 RELEASE v'\)/);
-assert.match(workflow, /tag_name: \$\{\{ needs\.release-info\.outputs\.tag \}\}/);
-assert.match(workflow, /SOUNDDESIGNER_RELEASE_TAG: \$\{\{ needs\.release-info\.outputs\.tag \}\}/);
-assert.match(workflow, /raw\.githubusercontent\.com\/iboyshanto\/SoundDesigner\/main\/\.github\/assets\/SoundDesigner\.png/);
+assert.match(workflow, /branches: \[main\]/);
+assert.match(workflow, /contents: read/);
+assert.doesNotMatch(workflow, /\$\{\{ runner\.temp \}\}/);
+assert.match(workflow, /RESOLVE_WORKFLOW_NODE=\$native/);
+assert.match(workflow, /SOUNDDESIGNER_ZXP=\$zxp/);
+assert.doesNotMatch(workflow, /action-gh-release|publish-release|contents: write|release:package|notarytool|--sign/);
 assert.doesNotMatch(workflow, /release-artifacts\/\*\.zxp/);
+assert.match(workflow, /native_candidates/);
 assert.doesNotMatch(workflow, /release-artifacts\/\*\s*$/m);
-assert.match(workflow, /bun run release:package && bun run installer:windows/);
-assert.match(workflow, /name: windows-release[\s\S]*path: release/);
-assert.match(workflow, /node scripts\/build-macos-installer\.mjs/);
+assert.match(workflow, /bun run installer:windows/);
+assert.match(workflow, /name: windows-installer-candidate/);
+assert.match(workflow, /bun run installer:macos/);
 assert.match(workflow, /SoundDesigner-\*-Windows-Setup\.exe/);
-assert.match(workflow, /SoundDesigner-\*-macOS\.dmg/);
+assert.match(workflow, /SoundDesigner-\*-macOS\.pkg/);
 assert.match(windowsBuilder, /SoundDesigner\.Extension\.zxp/);
 assert.match(windowsInstaller, /com\.rksound\.designer/);
-assert.match(windowsInstaller, /Path\.Combine\(common, "Adobe", "CEP", "extensions"\)/);
-assert.match(windowsInstaller, /Path\.Combine\("META-INF", "signatures\.xml"\)/);
-assert.match(macBuilder, /Adobe CEP Extensions/);
-assert.match(macBuilder, /\/Library\/Application Support\/Adobe\/CEP\/extensions/);
-assert.match(macBuilder, /\.VolumeIcon\.icns/);
-assert.match(macBuilder, /background\.png/);
-assert.match(macBuilder, /hdiutil/);
+assert.match(windowsInstaller, /CommonProgramFilesX86/);
+assert.match(windowsInstaller, /--choices.*--adobe[\s\S]*--resolve/);
+assert.match(windowsInstaller, /SoundDesigner\.Resolve\.zip/);
+assert.match(windowsInstaller, /Select at least one application/);
+assert.match(windowsInstaller, /Choose your software/);
+assert.match(windowsInstaller, /View install locations/);
+assert.match(windowsInstaller, /Text = "Premiere Pro \/ After Effects"/);
+assert.match(windowsInstaller, /Focused && ShowFocusCues && Enabled/);
+assert.match(windowsInstaller, /ActiveControl = adobeChoice/);
+assert.match(windowsInstaller, /TextFormatFlags.NoPrefix/);
+assert.doesNotMatch(windowsInstaller, /Monogram|Primary \? Color.White : SetupTheme.AccentStrong/);
+for (const [file, resource, signature] of [["adobe-symbol.png", "SoundDesigner.Adobe.png", "89504e470d0a1a0a"], ["resolve.png", "SoundDesigner.Resolve.png", "89504e470d0a1a0a"]]) {
+  const bytes = readFileSync(path.join(root, "scripts", "installer-assets", file));
+  assert.ok(bytes.toString("hex").startsWith(signature), `${file} must be an image`);
+  assert.equal(bytes.readUInt32BE(16), 256, "Logo width must retain high-DPI detail");
+  assert.equal(bytes.readUInt32BE(20), 256, "Logos must be square");
+  assert.equal(bytes[25], 6, "Logo PNG must include alpha rather than a white matte");
+  assert.ok(windowsBuilder.includes(resource));
+  assert.ok(windowsInstaller.includes(`LoadLogo("${resource}")`));
+  assert.ok(welcomeHtml.includes(`src="${file}"`));
+  assert.ok(conclusionHtml.includes(`src="${file}"`));
+}
+assert.match(macBuilder, /for \(const asset of \["adobe-symbol.png", "resolve.png"\]\) await cp/);
+assert.match(welcomeHtml, /Premiere Pro \/ After Effects/);
+assert.match(windowsInstaller, /class SoftwareChoice : CheckBox/);
+const productStyles = read("src/js/main/main.scss");
+for (const [name, token] of Object.entries({ Background: "bg-0", Panel: "bg-1", Raised: "bg-2", Border: "bg-4", Text: "text-1", Secondary: "text-2", Accent: "accent", AccentStrong: "accent-strong" })) {
+  const hex = productStyles.match(new RegExp(`--${token}: #([0-9a-f]{6});`, "i"))[1];
+  const rgb = hex.match(/../g).map(value => parseInt(value, 16)).join(", ");
+  assert.ok(windowsInstaller.includes(`Color ${name} = Color.FromArgb(${rgb});`), `Installer ${name} must match SoundDesigner --${token}`);
+}
+assert.match(windowsInstaller, /ScrollBars = ScrollBars.None/);
+assert.match(windowsInstaller, /detail.ScrollBars = ScrollBars.Vertical; detail.Text = message/);
+assert.doesNotMatch(windowsInstaller, /Choose your hosts|Select at least one host|inside your creative hosts/);
+assert.match(macBuilder, /pkgbuild/);
+assert.match(macBuilder, /productbuild/);
+assert.match(macBuilder, /--nopayload/);
+assert.match(macBuilder, /--sign/);
+assert.match(macBuilder, /notarytool/);
+assert.match(macBuilder, /stapler/);
+for (const job of ["shared-static", "adobe-build", "resolve-build", "windows-installer", "macos-installer", "artifact-audit", "native-certification"]) assert.match(workflow, new RegExp(`^  ${job}:`, "m"));
+const xml = distributionXml("1.0.4");
+assert.match(xml, /<welcome file="welcome.html" mime-type="text\/html"/);
+assert.match(xml, /<conclusion file="conclusion.html" mime-type="text\/html"/);
+assert.match(macBuilder, /writeFile\(path.join\(resources, "welcome.html"\), welcomeHtml\)/);
+assert.match(macBuilder, /writeFile\(path.join\(resources, "conclusion.html"\), conclusionHtml\)/);
+for (const page of [welcomeHtml, conclusionHtml]) {
+  for (const token of ["bg-0", "bg-1", "bg-2", "bg-3", "bg-4", "text-1", "text-2", "accent", "accent-strong"]) {
+    const color = productStyles.match(new RegExp(`--${token}: (#[0-9a-f]{6});`, "i"))[1];
+    assert.ok(page.includes(color), `Mac installer page must match SoundDesigner --${token}`);
+  }
+  assert.doesNotMatch(page, /<script|<input|<button|https?:\/\//i);
+}
+assert.match(welcomeHtml, /Customize/);
+assert.match(conclusionHtml, /Workflow Integrations/);
+assert.match(xml, /choices-outline/);
+assert.match(xml, /com\.rksound\.designer\.pkg\.adobe/);
+assert.match(xml, /com\.sound\.designer\.pkg\.resolve/);
+assert.doesNotMatch(xml, /<relocate|customLocation=/);
+const script = xml.match(/<!\[CDATA\[([\s\S]*?)\]\]>/)[1];
+const context = { choices: { adobe: { selected: false }, resolve: { selected: false } }, my: { target: { mountpoint: "/" }, result: {} }, system: { files: { fileExistsAtPath: value => value.includes("Adobe") } } };
+vm.createContext(context); vm.runInContext(script, context);
+assert.equal(context.initialSelection("adobe"), true);
+assert.equal(context.initialSelection("resolve"), false);
+assert.equal(context.initialSelection("adobe"), false, "Manual deselection must be retained");
+assert.equal(context.checkChoices(), false);
+context.choices.resolve.selected = true;
+assert.equal(context.checkChoices(), true);
+context.choices.adobe.selected = true;
+assert.equal(context.checkChoices(), true);
+context.choices.resolve.selected = false;
+assert.equal(context.checkChoices(), true);
+context.my.target.mountpoint = "/Volumes/Other";
+assert.equal(context.checkChoices(), false);
+for (const target of ["adobe", "resolve"]) {
+  const install = componentScript(target, "postinstall");
+  assert.match(install, /trap cleanup EXIT/);
+  assert.match(install, /Retained recovery backup/);
+  assert.match(install, /validate "\$destination"/);
+  assert.doesNotMatch(install, /storage-location|sounddesigner\.json|\/Users\/|\$HOME/);
+}
+const updaterSource = read("src/js/main/updater.ts");
+const scoring = updaterSource.slice(updaterSource.indexOf("const trustedGithubUrl"), updaterSource.indexOf("const requestLatestRelease"));
+// Execute the actual scoring implementation after TypeScript erasure.
+const { transformSync } = await import("esbuild");
+const transformed = transformSync(scoring + "\n globalThis.pick = selectAsset;", { loader: "ts" }).code;
+const asset = name => ({ name, state: "uploaded", browser_download_url: `https://github.com/iboyshanto/SoundDesigner/releases/download/v1.0.4/${name}` });
+for (const platform of ["MacIntel", "Win32"]) {
+  const runtime = { navigator: { platform }, UPDATE_REPOSITORY: "iboyshanto/SoundDesigner" };
+  vm.createContext(runtime); vm.runInContext(transformed, runtime);
+  const assets = [asset("SoundDesigner-macOS.dmg"), asset("SoundDesigner-Windows-Setup.exe"), asset("SoundDesigner-macOS.pkg")];
+  assert.equal(runtime.pick(assets).name, platform === "MacIntel" ? "SoundDesigner-macOS.pkg" : "SoundDesigner-Windows-Setup.exe");
+  assert.equal(runtime.pick([asset(platform === "MacIntel" ? "SoundDesigner-Windows-Setup.exe" : "SoundDesigner-macOS.pkg")]), null);
+  assert.equal(runtime.pick([{ ...asset("SoundDesigner-macOS.pkg"), browser_download_url: "https://github.com/other/repository/releases/download/v1.0.4/SoundDesigner-macOS.pkg" }]), null);
+  if (platform === "MacIntel") assert.equal(runtime.pick([asset("SoundDesigner-macOS.dmg")]).name, "SoundDesigner-macOS.dmg");
+}
 assert.match(packager, /ZXPSignCmd/);
+assert.match(packager, /artifact-audit\.ts", "--prepare-adobe"/);
 assert.match(packager, /process\.env\.SOUNDDESIGNER_RELEASE_TAG/);
 
 console.log("Installer release wiring passed.");

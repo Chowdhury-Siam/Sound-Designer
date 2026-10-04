@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { mock } from "bun:test";
+import { registerPlatform } from "../src/js/platform/client";
+import type { SoundDesignerPlatform } from "../src/js/platform/types";
+registerPlatform({ capabilities: { nativeCloud: false } } as SoundDesignerPlatform);
 (globalThis as any).window = { cep: undefined };
 const storage = new Map<string, string>();
 (globalThis as any).localStorage = { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) };

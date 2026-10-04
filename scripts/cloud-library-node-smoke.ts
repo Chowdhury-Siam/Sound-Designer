@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import https from "node:https";
 import { createRequire } from "node:module";
+import { registerPlatform } from "../src/js/platform/client";
+import type { SoundDesignerPlatform } from "../src/js/platform/types";
+registerPlatform({ capabilities: { nativeCloud: false } } as SoundDesignerPlatform);
 
 // Run this with native Node after bundling. Bun supplies a default User-Agent
 // that native CEP Node does not, so it cannot catch the original HTTP 403 bug.

@@ -10,7 +10,8 @@ import type {
   HostProjectContext,
   SoundFile,
 } from "./types";
-import { audioNormalizationKey, audioProcessingKey, encodeRenderedWave, hasAudioProcessing, normalizeTargetDb, renderAudioProcessing } from "./audioEffects";
+import { audioNormalizationKey, audioProcessingKey, encodeRenderedWave, hasAudioProcessing, normalizeAudioProcessing, normalizeTargetDb, renderAudioProcessing } from "./audioEffects";
+import { platform } from "../platform/client";
 
 const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
 const MAX_DECODE_BYTES = 128 * 1024 * 1024;
@@ -210,6 +211,12 @@ const downloadFile = (
 });
 
 const readFileBuffer = async (filePath: string) => {
+  if (platform().capabilities.nativeAudioPreparation) {
+    const result = await platform().audio.readFile(filePath);
+    if (!result.ok) throw new Error(result.error.message);
+    if (result.data.byteLength > MAX_DECODE_BYTES) throw new Error("This audio file is too large for the compatibility converter.");
+    return result.data.buffer.slice(result.data.byteOffset, result.data.byteOffset + result.data.byteLength) as ArrayBuffer;
+  }
   const stat = fs.statSync(filePath);
   if (stat.size > MAX_DECODE_BYTES) throw new Error("This audio file is too large for the compatibility converter.");
   const bytes = await new Promise<Uint8Array>((resolve, reject) => {
@@ -275,19 +282,22 @@ const fileFingerprint = (sound: SoundFile, sourcePath: string, policy: AudioConv
   return crypto.createHash("sha1").update(key).digest("hex").slice(0, 12);
 };
 
-const projectDirectories = (project: HostProjectContext) => {
+const projectDirectories = async (project: HostProjectContext) => {
   if (!project.ok || !project.projectDirectory || !project.projectName) throw new Error(project.message || "Save the Adobe project before preparing audio.");
-  const projectName = safeName(project.projectName, "Adobe Project");
-  const root = path.join(project.projectDirectory, "SoundDesigner", projectName);
-  const originals = path.join(root, "Freesound", "Originals");
+  const portableRoot = await platform().storage.getProjectRoot(project);
+  if (!portableRoot.ok) throw new Error(portableRoot.error.message);
+  const root = portableRoot.data;
+  const originals = path.join(root, "Downloads");
   const converted = path.join(root, "Converted");
+  const processed = path.join(root, "Processed");
   const segments = path.join(root, "Segments");
   const metadata = path.join(root, "Metadata");
   ensureDirectory(originals);
   ensureDirectory(converted);
+  ensureDirectory(processed);
   ensureDirectory(segments);
   ensureDirectory(metadata);
-  return { root, originals, converted, segments, metadata };
+  return { root, originals, converted, processed, segments, metadata };
 };
 
 const segmentTimeToken = (seconds: number) => String(Math.max(0, Math.round(seconds * 1000))).padStart(8, "0");
@@ -300,6 +310,69 @@ const segmentDisplayTime = (seconds: number) => {
 };
 
 export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudioOptions): Promise<PreparedAudio> => {
+  if (platform().capabilities.nativeAudioPreparation) {
+    if (options.signal?.aborted) throw new DOMException("Audio preparation was cancelled.", "AbortError");
+    let downloaded = false;
+    let source = sound;
+    if (isCloudSound(sound) && !sound.path) {
+      options.onProgress?.("downloading", `Downloading ${sound.name}…`);
+      const operationId = globalThis.crypto.randomUUID();
+      const unsubscribe = platform().cloud.onDownloadProgress?.((progress) => {
+        if (progress.operationId === operationId) options.onProgress?.("downloading", `Downloading ${sound.name}…`, progress.progress);
+      });
+      const cancel = () => { void platform().cloud.cancel(operationId); };
+      options.signal?.addEventListener("abort", cancel, { once: true });
+      try {
+        const result = sound.source === "scorpion"
+          ? await platform().cloud.download({ operationId, sourceId: sound.sourceId || sound.id, displayName: `${sound.name}.mp3` })
+          : await platform().cloud.downloadFreesound({ operationId, url: sound.previewUrl || "", sourceId: sound.sourceId || sound.id, displayName: `${sound.name}.mp3`, creator: sound.creator, license: sound.license, sourceUrl: sound.sourceUrl });
+        if (options.signal?.aborted) throw new DOMException("Audio preparation was cancelled.", "AbortError");
+        if (!result.ok) throw new Error(result.error.message);
+        const extension = result.data.path.split(".").pop()?.toLowerCase() || "mp3";
+        source = { ...sound, path: result.data.path, originalPath: result.data.path, extension, originalExtension: extension, size: result.data.size, modifiedAt: result.data.modifiedAt, downloadState: "ready" };
+        downloaded = true;
+      } finally { unsubscribe?.(); options.signal?.removeEventListener("abort", cancel); }
+    }
+    const workingPath = source.originalPath || source.path;
+    if (!workingPath) throw new Error("The source audio file is unavailable.");
+    const needsConversion = options.normalization !== "preserve"
+      || hasAudioProcessing(options.processing)
+      || options.conversionPolicy === "always"
+      || (source.originalExtension || source.extension).toLowerCase() !== "wav";
+    if (!needsConversion) return { sound: source, projectRoot: "", converted: false, downloaded, gainDb: 0 };
+    options.onProgress?.("converting", `Converting ${sound.name} to WAV…`);
+    const decoded = await decodeAudio(workingPath, options.signal);
+    const encoded = await encodePcm24Wave(decoded, options.normalization, options.processing, options.signal, 0, decoded.length, options.normalizationTargetDb);
+    const written = await platform().audio.writePrepared({
+      sourceId: `${sound.sourceId || sound.id}|${source.size}|${source.modifiedAt}|${audioNormalizationKey(options.normalization, options.normalizationTargetDb)}|${audioProcessingKey(options.processing)}`,
+      displayName: sound.name,
+      kind: hasAudioProcessing(options.processing) ? "processed" : "converted",
+      bytes: encoded.bytes,
+      projectPath: options.project.projectPath || "",
+      metadata: { sourcePath: workingPath, normalization: options.normalization, normalizationTargetDb: options.normalizationTargetDb, processing: options.processing ? normalizeAudioProcessing(options.processing) : null },
+    });
+    if (!written.ok) throw new Error(written.error.message);
+    return {
+      sound: {
+        ...source,
+        path: written.data.path,
+        extension: "wav",
+        size: written.data.size,
+        modifiedAt: written.data.modifiedAt,
+        duration: encoded.duration,
+        channels: decoded.numberOfChannels,
+        sampleRate: decoded.sampleRate,
+        preparedProjectPath: options.project.projectPath,
+        preparedProfile: `${options.conversionPolicy}:${audioNormalizationKey(options.normalization, options.normalizationTargetDb)}:${audioProcessingKey(options.processing)}`,
+        originalPath: source.originalPath || workingPath,
+        originalExtension: source.originalExtension || source.extension,
+      },
+      projectRoot: written.data.projectRoot,
+      converted: true,
+      downloaded,
+      gainDb: encoded.gainDb,
+    };
+  }
   if (!window.cep) throw new Error("Audio preparation is available inside the installed Adobe panel.");
   if (options.signal?.aborted) throw new DOMException("Audio preparation was cancelled.", "AbortError");
   let workingPath = isCloudSound(sound) ? "" : sound.originalPath || sound.path;
@@ -330,7 +403,7 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
     };
   }
 
-  const directories = projectDirectories(options.project);
+  const directories = await projectDirectories(options.project);
 
   if (isCloudSound(sound)) {
     if ((!sound.previewUrl && sound.source !== "scorpion") || !sound.sourceId) throw new Error("This Freesound result has no downloadable preview.");
@@ -381,7 +454,7 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
     const fingerprint = fileFingerprint(sound, workingPath, options.conversionPolicy, options.normalization, options.normalizationTargetDb, options.processing);
     const targetDb = options.normalization === "manual" ? normalizeTargetDb(options.normalizationTargetDb) : -1;
     const suffix = options.normalization !== "preserve" ? `-norm-${Math.abs(targetDb).toFixed(1).replace(".", "p")}db` : "";
-    preparedPath = path.join(directories.converted, `${safeName(sound.sourceId || sound.id, "sound")}-${safeName(sound.name, "audio")}-${fingerprint}${suffix}.wav`);
+    preparedPath = path.join(hasAudioProcessing(options.processing) ? directories.processed : directories.converted, `${safeName(sound.sourceId || sound.id, "sound")}-${safeName(sound.name, "audio")}-${fingerprint}${suffix}.wav`);
     if (!fs.existsSync(preparedPath)) {
       const temporary = `${preparedPath}.part`;
       try {
@@ -445,9 +518,55 @@ export const prepareAudioSegmentForHost = async (
   selection: AudioSegmentSelection,
   options: PrepareAudioOptions,
 ): Promise<PreparedAudio> => {
-  if (!window.cep) throw new Error("Audio segment rendering is available inside the installed Adobe panel.");
   if (!Number.isFinite(selection.start) || !Number.isFinite(selection.end)) throw new Error("The selected audio range is invalid.");
   if (selection.end - selection.start < MIN_SEGMENT_SECONDS) throw new Error("Select at least 0.05 seconds of audio.");
+
+  if (platform().capabilities.nativeAudioPreparation) {
+    const preparedSource = isCloudSound(sound) && !sound.path
+      ? await prepareAudioForHost(sound, { ...options, normalization: "preserve", processing: undefined })
+      : { sound, downloaded: false };
+    const sourcePath = preparedSource.sound.originalPath || preparedSource.sound.path;
+    const decoded = await decodeAudio(sourcePath, options.signal);
+    const sourceDuration = decoded.duration || sound.duration || 0;
+    const maximumStart = Math.max(0, sourceDuration - MIN_SEGMENT_SECONDS);
+    const startSeconds = Math.max(0, Math.min(maximumStart, selection.start));
+    const endSeconds = Math.min(sourceDuration, Math.max(startSeconds + MIN_SEGMENT_SECONDS, selection.end));
+    if (endSeconds <= startSeconds) throw new Error("The selected range falls outside this sound.");
+    const startFrame = Math.floor(startSeconds * decoded.sampleRate);
+    const endFrame = Math.min(decoded.length, Math.ceil(endSeconds * decoded.sampleRate));
+    const encoded = await encodePcm24Wave(decoded, options.normalization, options.processing, options.signal, startFrame, endFrame, options.normalizationTargetDb);
+    const rangeToken = `${segmentTimeToken(startSeconds)}-${segmentTimeToken(endSeconds)}`;
+    const written = await platform().audio.writePrepared({
+      sourceId: `${sound.sourceId || sound.id}|${sound.size}|${sound.modifiedAt}|segment|${rangeToken}|${audioNormalizationKey(options.normalization, options.normalizationTargetDb)}|${audioProcessingKey(options.processing)}`,
+      displayName: `${sound.name} [${segmentDisplayTime(startSeconds)}–${segmentDisplayTime(endSeconds)}]`,
+      kind: "segments",
+      bytes: encoded.bytes,
+      projectPath: options.project.projectPath || "",
+      metadata: { sourcePath, startSeconds, endSeconds, normalization: options.normalization, normalizationTargetDb: options.normalizationTargetDb, processing: options.processing ? normalizeAudioProcessing(options.processing) : null },
+    });
+    if (!written.ok) throw new Error(written.error.message);
+    return {
+      sound: {
+        ...preparedSource.sound,
+        id: `${sound.id}:segment:${rangeToken}`,
+        name: `${sound.name} [${segmentDisplayTime(startSeconds)}–${segmentDisplayTime(endSeconds)}]`,
+        path: written.data.path,
+        extension: "wav",
+        size: written.data.size,
+        modifiedAt: written.data.modifiedAt,
+        duration: encoded.duration,
+        channels: decoded.numberOfChannels,
+        sampleRate: decoded.sampleRate,
+        preparedProjectPath: options.project.projectPath,
+        preparedProfile: `${options.conversionPolicy}:${audioNormalizationKey(options.normalization, options.normalizationTargetDb)}:${audioProcessingKey(options.processing)}`,
+      },
+      projectRoot: written.data.projectRoot,
+      converted: true,
+      downloaded: preparedSource.downloaded,
+      gainDb: encoded.gainDb,
+    };
+  }
+  if (!window.cep) throw new Error("Audio segment rendering is available inside the installed Adobe panel.");
 
   // Prepare only for codec compatibility here. Applying normalization to the
   // whole source would create an unnecessary intermediate WAV and would base
@@ -472,7 +591,7 @@ export const prepareAudioSegmentForHost = async (
 
   const startFrame = Math.floor(startSeconds * decoded.sampleRate);
   const endFrame = Math.min(decoded.length, Math.ceil(endSeconds * decoded.sampleRate));
-  const directories = projectDirectories(options.project);
+  const directories = await projectDirectories(options.project);
   const sourceFingerprint = fileFingerprint(preparedSource.sound, sourcePath, options.conversionPolicy, options.normalization, options.normalizationTargetDb, options.processing);
   const rangeToken = `${segmentTimeToken(startSeconds)}-${segmentTimeToken(endSeconds)}`;
   const fingerprint = crypto.createHash("sha1")

@@ -1,8 +1,37 @@
 node_modules/
 dist/
 release/
+output/
+release-artifacts/
 .signing/
+.installer-windows-*/
+.installer-macos-*/
+
+# Generated caches and test output (keep native SDK inputs and source assets).
+.cache/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Temporary files, logs and local backups.
+tmp/
+temp/
+.tmp/
+logs/
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*~
+.rnd
 .DS_Store
+._*
+Thumbs.db
+Desktop.ini
 *.local
 *.p12
 *.pfx
@@ -11,5 +40,4 @@ release/
 .env
 .env.*
 !.env.production
-yarn-error.log
 .media

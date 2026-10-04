@@ -1,4 +1,4 @@
-export type HostApp = "premiere" | "aftereffects" | "browser" | "unknown";
+export type HostApp = "premiere" | "aftereffects" | "resolve" | "browser" | "unknown";
 
 export type AccentName = "graphite";
 
@@ -127,10 +127,12 @@ export type ToastMessage = {
 };
 
 export type InsertAudioRequest = {
+  channelMode?: "mono" | "stereo";
   path: string;
   name: string;
   targetAudioTrack: number;
   insertionTarget?: InsertionTarget;
+  projectPath?: string;
 };
 
 export type HostResult = {
