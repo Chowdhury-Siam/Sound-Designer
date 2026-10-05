@@ -15,7 +15,8 @@ const signer = resolve("node_modules/vite-cep-plugin/lib/bin", platform() === "w
 if (!existsSync(signer)) throw new Error("ZXPSignCmd is missing. Run bun install before creating the certificate.");
 if (platform() !== "win32") chmodSync(signer, 0o755);
 
-let password = "";
+let password = process.env.SOUNDDESIGNER_ZXP_PASSWORD || "";
+if (password && password.length < 12) throw new Error("The publisher password must contain at least 12 characters.");
 while (!password) {
   const first = await promptHidden("Create publisher password (minimum 12 characters): ");
   if (first.length < 12) {

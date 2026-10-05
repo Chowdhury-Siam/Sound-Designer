@@ -146,4 +146,28 @@ assert.match(packager, /ZXPSignCmd/);
 assert.match(packager, /artifact-audit\.ts", "--prepare-adobe"/);
 assert.match(packager, /process\.env\.SOUNDDESIGNER_RELEASE_TAG/);
 
+// Exercise the actual certificate-selection block without generating keys or signing.
+const certificateBlock = packager.slice(packager.indexOf("const localCertificate"), packager.indexOf("const debugPath"));
+const certificateScenario = async ({ env = {}, present = false, result = { status: 0 } } = {}) => {
+  const calls = [];
+  const runtime = {
+    process: { env, execPath: "node" }, resolve: value => value,
+    existsSync: () => present,
+    console: { warn: () => {} },
+    spawnSync: (...args) => { calls.push(args); if (result.status === 0) present = true; return result; },
+    promptHidden: async () => "test-password-only",
+  };
+  vm.createContext(runtime);
+  await vm.runInContext(`(async () => { ${certificateBlock} })()`, runtime);
+  return calls;
+};
+assert.equal((await certificateScenario({ present: true })).length, 0);
+assert.equal((await certificateScenario({ present: true, env: { SOUNDDESIGNER_ZXP_CERT: "existing.p12" } })).length, 0);
+assert.equal((await certificateScenario()).length, 1);
+await assert.rejects(certificateScenario({ env: { CI: "true" } }), /missing in CI/);
+await assert.rejects(certificateScenario({ env: { SOUNDDESIGNER_ZXP_CERT: "missing.p12" } }), /was not found/);
+await assert.rejects(certificateScenario({ result: { status: 1 } }), /creation failed/);
+await assert.rejects(certificateScenario({ result: { error: new Error("spawn failed") } }), /spawn failed/);
+assert.match(read("scripts/create-publisher-certificate.mjs"), /password.length < 12/);
+
 console.log("Installer release wiring passed.");

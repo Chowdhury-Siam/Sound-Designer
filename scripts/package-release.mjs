@@ -24,11 +24,17 @@ if (!manifest.includes(`ExtensionBundleVersion="${version}"`)) {
 }
 
 const localCertificate = resolve(".signing/SoundDesigner-publisher.p12");
-const certPath = process.env.SOUNDDESIGNER_ZXP_CERT || (existsSync(localCertificate) ? localCertificate : "");
+const certPath = process.env.SOUNDDESIGNER_ZXP_CERT || localCertificate;
 let password = process.env.SOUNDDESIGNER_ZXP_PASSWORD || "";
-if (!certPath) throw new Error("Publisher certificate is missing. Run bun run certificate:create once before packaging.");
 const certificate = resolve(certPath);
-if (!existsSync(certificate)) throw new Error(`Publisher certificate was not found: ${certificate}`);
+if (!existsSync(certificate)) {
+  if (process.env.SOUNDDESIGNER_ZXP_CERT) throw new Error(`Publisher certificate was not found: ${certificate}`);
+  if (process.env.CI) throw new Error("Publisher certificate is missing in CI. Supply the existing publisher certificate; automatic identity creation is local-only.");
+  console.warn("No local publisher certificate found. Creating a NEW signing identity for this machine. Restore the original certificate instead if you need the existing publisher identity.");
+  const creation = spawnSync(process.execPath, [resolve("scripts/create-publisher-certificate.mjs")], { stdio: "inherit", windowsHide: true });
+  if (creation.error) throw creation.error;
+  if (creation.status !== 0 || !existsSync(certificate)) throw new Error("Publisher certificate creation failed; packaging stopped.");
+}
 if (!password) {
   if (process.env.CI) throw new Error("SOUNDDESIGNER_ZXP_PASSWORD is not configured for this CI release.");
   password = await promptHidden("Publisher certificate password: ");

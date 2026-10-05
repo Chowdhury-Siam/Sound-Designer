@@ -401,12 +401,14 @@ bun run build
 Production releases require a persistent publisher certificate. Keep both the certificate and its password secure; users need the same publisher identity for seamless updates.
 
 ```sh
-# Create a persistent local certificate once
+# Optional: create a persistent local certificate before your first build
 bun run certificate:create
 
 # Test, build, sign the ZXP, and generate its SHA-256 checksum
 bun run release:package
 ```
+
+Local packaging automatically creates `.signing/SoundDesigner-publisher.p12` if no certificate is configured or present, prompting you to create and confirm a password. This creates a **new publisher identity**; restore your original certificate instead when retaining the existing publisher identity matters. Existing certificates are reused, never deliberately replaced. CI requires a supplied certificate, and an invalid explicit `SOUNDDESIGNER_ZXP_CERT` path fails instead of silently creating another identity. Keep the certificate and password backed up privately; neither belongs in Git.
 
 The signed ZXP in `release/` is the input for both platform installers:
 
