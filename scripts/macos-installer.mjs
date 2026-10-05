@@ -12,28 +12,28 @@ const destinations = {
 // Automatic text/background colors respect the user's light/dark appearance.
 const brandedPage = (heading, content) => String.raw`{\rtf1\ansi\ansicpg1252\cocoartf2709
 {\fonttbl\f0\fswiss Helvetica;}
-{\colortbl;\red10\green111\blue216;}
-\vieww10000\viewh8000\paperw10000\paperh8000\margl320\margr320\margt280\margb280
-\pard\f0\fs36\cf0\sa160\b ${heading}\b0\par
-\pard\fs22\sa160 ${content}
+{\colortbl;\red10\green111\blue216;\red92\green104\blue120;}
+\vieww10000\viewh8000\paperw10000\paperh8000\margl480\margr480\margt480\margb320
+\pard\f0\fs40\cf0\sa160\b ${heading}\b0\par
+\pard\fs22\sa320 ${content}
 }`;
 
 // AppKit puts these adjacent paragraphs in two vertically centered table
 // cells during serialization. Do not rely on imported RTF cell boundaries.
-const softwareRow = (logo, title, description) => String.raw`\pard\sb0\sa0\fs22 {{\NeXTGraphic ${logo} \width640 \height640}\'ac}\par
-\pard\sb0\sa0\fs24\b ${title}\b0\line\fs22 ${description}\par
+const softwareRow = (logo, title, description) => String.raw`\pard\sb0\sa0\fs22 {{\NeXTGraphic ${logo} \width800 \height800}\'ac}\par
+\pard\sb0\sa0\fs26\b ${title}\b0\line\fs20 ${description}\par
 \pard\fs8\sb0\sa0\par`;
 
 export const welcomeRtfd = brandedPage("Choose your software", String.raw`Select Adobe, Resolve, or both in \b Customize\b0 .\par
 ${softwareRow("adobe-symbol.png", "Premiere Pro / After Effects", "Inside your Adobe editing workspace.")}
 ${softwareRow("resolve.png", "DaVinci Resolve Studio", "Inside Workflow Integrations.")}
-\pard\li0\fi0\fs22\sb360\sa80 Save your work. Quit selected applications with Command-Q.\par
+\pard\li0\fi0\fs20\sb480\sa120\brdrt\brdrs\brdrw10\brdrcf2\brsp160 Save your work. Quit selected applications with Command-Q.\par
 \pard\fs20\sa0 Libraries, memories and settings stay untouched.\par`);
 
 export const conclusionRtfd = brandedPage("Ready to create", String.raw`Open the applications you selected, then launch SoundDesigner:\par
 ${softwareRow("adobe-symbol.png", "Premiere Pro / After Effects", "Window > Extensions (or Extensions Legacy) > SoundDesigner")}
 ${softwareRow("resolve.png", "DaVinci Resolve Studio", "Workspace > Workflow Integrations > SoundDesigner")}
-\pard\li0\fi0\fs22\sb360 Choose your audio library folder inside SoundDesigner.\par`);
+\pard\li0\fi0\fs20\sb480\brdrt\brdrs\brdrw10\brdrcf2\brsp160 Choose your audio library folder inside SoundDesigner.\par`);
 
 // productbuild reads declared welcome/conclusion resources as files, not
 // directory wrappers. Serialize the RTFD wrapper using Apple's native format.
@@ -67,10 +67,13 @@ function run(argv) {
       var paragraph = attributes.objectForKey($.NSParagraphStyleAttributeName).mutableCopy;
       var cell = $.NSTextTableBlock.alloc.initWithTableStartingRowRowSpanStartingColumnColumnSpan(table, 0, 1, column, 1);
       cell.verticalAlignment = $.NSTextBlockMiddleAlignment;
+      cell.setWidthTypeForLayerEdge(12, $.NSTextBlockAbsoluteValueType, $.NSTextBlockPadding, $.NSMinYEdge);
+      cell.setWidthTypeForLayerEdge(12, $.NSTextBlockAbsoluteValueType, $.NSTextBlockPadding, $.NSMaxYEdge);
       if (column === 0) {
-        cell.setContentWidthType(32, $.NSTextBlockAbsoluteValueType);
-        cell.setWidthTypeForLayerEdge(12, $.NSTextBlockAbsoluteValueType, $.NSTextBlockPadding, $.NSMaxXEdge);
+        cell.setContentWidthType(40, $.NSTextBlockAbsoluteValueType);
+        cell.setWidthTypeForLayerEdge(16, $.NSTextBlockAbsoluteValueType, $.NSTextBlockPadding, $.NSMaxXEdge);
       }
+      paragraph.lineSpacing = 3;
       paragraph.textBlocks = $([cell]);
       text.addAttributeValueRange($.NSParagraphStyleAttributeName, paragraph, text.string.paragraphRangeForRange($.NSMakeRange(position, 1)));
     });
@@ -97,7 +100,9 @@ function run(argv) {
   ['adobe-symbol.png', 'resolve.png'].forEach(function (name) {
     var file = wrapper.fileWrappers.objectForKey(name);
     var image = $.NSImage.alloc.initWithData(file.regularFileContents);
-    if (!image || Math.abs(image.size.width - 32) > 0.1 || Math.abs(image.size.height - 32) > 0.1) throw new Error('Installer logo must be 32pt at 72 DPI: ' + name);
+    if (!image || Math.abs(image.size.width - 40) > 0.1 || Math.abs(image.size.height - 40) > 0.1) throw new Error('Installer logo must display at 40pt: ' + name);
+    var bitmap = $.NSBitmapImageRep.alloc.initWithData(file.regularFileContents);
+    if (!bitmap || Number(bitmap.pixelsWide) < 80 || Number(bitmap.pixelsHigh) < 80) throw new Error('Installer logo must retain at least 2x Retina detail: ' + name);
   });
   if (!data || !data.length || !data.writeToFileAtomically(argv[1], true)) throw new Error('Cannot write flattened RTFD resource');
 }`;
@@ -110,12 +115,11 @@ export const writeMacInstallerResources = async (resources, source) => {
     for (const asset of ["adobe-symbol.png", "resolve.png"]) {
       const copy = path.join(document, asset);
       await cp(new URL(`./installer-assets/${asset}`, import.meta.url), copy);
-      // Installer can use intrinsic PNG dimensions instead of RTF width/height.
-      // Normalize DPI too: the Adobe source is ~768 DPI, so a 32px copy at
-      // that density is only ~3pt in AppKit. Keep shared source assets intact.
-      const resized = spawnSync("/usr/bin/sips", ["--resampleHeightWidth", "32", "32", "--setProperty", "dpiWidth", "72", "--setProperty", "dpiHeight", "72", copy], { stdio: "inherit" });
-      if (resized.error) throw resized.error;
-      if (resized.status !== 0) throw new Error(`Resizing installer logo failed (${resized.status}).`);
+      // 256px / 40pt * 72 = 460.8 DPI. Keep all source pixels for Retina;
+      // only change staged metadata, never resample or mutate shared assets.
+      const density = spawnSync("/usr/bin/sips", ["--setProperty", "dpiWidth", "460.8", "--setProperty", "dpiHeight", "460.8", copy], { stdio: "inherit" });
+      if (density.error) throw density.error;
+      if (density.status !== 0) throw new Error(`Setting installer logo density failed (${density.status}).`);
     }
     await writeFile(path.join(document, "TXT.rtf"), text);
     const output = path.join(resources, `${name}.rtfd`);

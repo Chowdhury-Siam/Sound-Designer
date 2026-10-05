@@ -61,13 +61,16 @@ for (const [file, resource, signature] of [["adobe-symbol.png", "SoundDesigner.A
   assert.ok(windowsBuilder.includes(resource));
   assert.ok(windowsInstaller.includes(`LoadLogo("${resource}")`));
   for (const page of [welcomeRtfd, conclusionRtfd]) {
-    assert.ok(page.includes(`{\\NeXTGraphic ${file} \\width640 \\height640}\\'ac`), "Logo must be a native RTFD attachment with its replacement character");
+    assert.ok(page.includes(`{\\NeXTGraphic ${file} \\width800 \\height800}\\'ac`), "Logo must be a native 40pt RTFD attachment with its replacement character");
   }
 }
 assert.match(macResources, /for \(const asset of \["adobe-symbol.png", "resolve.png"\]\)/);
-assert.match(macResources, /"--resampleHeightWidth", "32", "32", "--setProperty", "dpiWidth", "72", "--setProperty", "dpiHeight", "72", copy/);
-assert.match(macResources, /Math.abs\(image.size.width - 32\) > 0.1/);
-assert.match(macResources, /Math.abs\(image.size.height - 32\) > 0.1/);
+assert.match(macResources, /"--setProperty", "dpiWidth", "460.8", "--setProperty", "dpiHeight", "460.8", copy/);
+assert.doesNotMatch(macResources, /"--resample/, "Never discard logo pixels to set the display size");
+assert.equal(256 / 460.8 * 72, 40, "Density maps the original 256px logo to 40pt");
+assert.match(macResources, /Math.abs\(image.size.width - 40\) > 0.1/);
+assert.match(macResources, /Math.abs\(image.size.height - 40\) > 0.1/);
+assert.match(flattenRtfdScript, /Number\(bitmap.pixelsWide\) < 80 \|\| Number\(bitmap.pixelsHigh\) < 80/, "Check actual packaged logos retain Retina resolution");
 assert.match(flattenRtfdScript, /Number\(cell.verticalAlignment\) !== Number\(\$.NSTextBlockMiddleAlignment\)/);
 assert.match(flattenRtfdScript, /if \(!hasSharedInstallerRow\(cells\)\)/);
 // Reproduce the Mac log: values print as 0/1, but boxed 0 !== primitive 0.
@@ -79,13 +82,15 @@ assert.equal(hasSharedInstallerRow([nativeCells[0], { ...nativeCells[1], startin
 assert.equal(hasSharedInstallerRow([nativeCells[0], { ...nativeCells[1], table: {} }]), false);
 assert.match(flattenRtfdScript, /initWithTableStartingRowRowSpanStartingColumnColumnSpan\(table, 0, 1, column, 1\)/);
 assert.match(flattenRtfdScript, /paragraph.textBlocks = \$\(\[cell\]\)/);
-assert.match(flattenRtfdScript, /setWidthTypeForLayerEdge\(12, \$.NSTextBlockAbsoluteValueType, \$.NSTextBlockPadding, \$.NSMaxXEdge\)/);
+assert.match(flattenRtfdScript, /setWidthTypeForLayerEdge\(16, \$.NSTextBlockAbsoluteValueType, \$.NSTextBlockPadding, \$.NSMaxXEdge\)/);
+for (const edge of ["NSMinYEdge", "NSMaxYEdge"]) assert.ok(flattenRtfdScript.includes(`setWidthTypeForLayerEdge(12, $.NSTextBlockAbsoluteValueType, $.NSTextBlockPadding, $.${edge})`), "Each software row needs deliberate vertical breathing room");
 assert.match(flattenRtfdScript, /RTFDFileWrapperFromRangeDocumentAttributes/);
 assert.ok(flattenRtfdScript.indexOf("data = wrapper.serializedRepresentation;", flattenRtfdScript.indexOf("RTFDFileWrapperFromRangeDocumentAttributes")) < flattenRtfdScript.indexOf("Installer software table was lost"), "Validate serialized cells after AppKit creates the table");
 new vm.Script(flattenRtfdScript); // Parse the embedded script too, not only its outer JS module.
 for (const page of [welcomeRtfd, conclusionRtfd]) {
-  assert.ok(page.includes("\\b Premiere Pro / After Effects\\b0\\line\\fs22 "));
-  assert.ok(page.includes("\\b DaVinci Resolve Studio\\b0\\line\\fs22 "));
+  assert.ok(page.includes("\\b Premiere Pro / After Effects\\b0\\line\\fs20 "));
+  assert.ok(page.includes("\\b DaVinci Resolve Studio\\b0\\line\\fs20 "));
+  assert.ok(page.includes("\\brdrt\\brdrs\\brdrw10"), "Separate safety/next-step instructions from the software list");
   assert.doesNotMatch(page, /\\trowd|\\cell(?:x|\b)/, "AppKit, not hand-written RTF markup, must construct table cells");
   assert.doesNotMatch(page, /\\tab|\\dn\d+/, "Do not approximate block alignment with tabs or baseline offsets");
   assert.doesNotMatch(page, /\\b SoundDesigner\\b0|Before you install/, "No duplicate brand eyebrow or unnecessary section heading");
@@ -119,7 +124,7 @@ assert.match(macResources, /!info.isFile\(\) \|\| !info.size/);
 assert.match(macBuilder, /writeMacInstallerResources\(resources, path.join\(work, "resource-source"\)\)/);
 for (const page of [welcomeRtfd, conclusionRtfd]) {
   assert.ok(page.startsWith("{\\rtf1"));
-  assert.match(page, /\\fs36/, "Use a compact 18pt heading");
+  assert.match(page, /\\fs40/, "Use a 20pt heading with 13pt titles and 10pt supporting text");
   assert.match(page, /\\red10\\green111\\blue216/, "Retain the SoundDesigner blue accent");
   assert.doesNotMatch(page, /<html|<script|https?:\/\//i);
 }
