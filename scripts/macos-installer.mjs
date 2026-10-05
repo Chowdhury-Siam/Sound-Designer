@@ -1,3 +1,7 @@
+import { cp, mkdir, writeFile, stat } from "node:fs/promises";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+
 const destinations = {
   adobe: "/Library/Application Support/Adobe/CEP/extensions/com.rksound.designer",
   resolve: "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Workflow Integration Plugins/com.sound.designer.resolve",
@@ -30,6 +34,35 @@ ${softwareRow("adobe-symbol.png", "Premiere Pro / After Effects", "Window > Exte
 ${softwareRow("resolve.png", "DaVinci Resolve Studio", "Workspace > Workflow Integrations > SoundDesigner")}
 \pard\fs22\sb100 Choose your audio library folder inside SoundDesigner.\par`);
 
+// productbuild reads declared welcome/conclusion resources as files, not
+// directory wrappers. Serialize the RTFD wrapper using Apple's native format.
+export const flattenRtfdScript = `ObjC.import('AppKit');
+function run(argv) {
+  var error = Ref();
+  var wrapper = $.NSFileWrapper.alloc.initWithURLOptionsError($.NSURL.fileURLWithPath(argv[0]), 0, error);
+  if (!wrapper || !wrapper.isDirectory) throw new Error('Cannot read RTFD source');
+  var data = wrapper.serializedRepresentation;
+  var text = $.NSAttributedString.alloc.initWithRTFDDocumentAttributes(data, null);
+  if (!text || !text.length || !text.containsAttachments) throw new Error('Flattened RTFD lost its text or logo attachments');
+  if (!data || !data.length || !data.writeToFileAtomically(argv[1], true)) throw new Error('Cannot write flattened RTFD resource');
+}`;
+
+export const writeMacInstallerResources = async (resources, source) => {
+  await mkdir(resources, { recursive: true });
+  for (const [name, text] of [["welcome", welcomeRtfd], ["conclusion", conclusionRtfd]]) {
+    const document = path.join(source, `${name}.rtfd`);
+    await mkdir(document, { recursive: true });
+    for (const asset of ["adobe-symbol.png", "resolve.png"]) await cp(new URL(`./installer-assets/${asset}`, import.meta.url), path.join(document, asset));
+    await writeFile(path.join(document, "TXT.rtf"), text);
+    const output = path.join(resources, `${name}.rtfd`);
+    const result = spawnSync("/usr/bin/osascript", ["-l", "JavaScript", "-e", flattenRtfdScript, document, output], { stdio: "inherit" });
+    if (result.error) throw result.error;
+    if (result.status !== 0) throw new Error(`Flattening ${name} resource failed (${result.status}).`);
+    const info = await stat(output);
+    if (!info.isFile() || !info.size) throw new Error(`Installer resource must be a non-empty file: ${output}`);
+  }
+};
+
 export const distributionXml = version => {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("Invalid installer version");
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -37,8 +70,8 @@ export const distributionXml = version => {
  <title>SoundDesigner</title>
  <options customize="always" require-scripts="true" allow-external-scripts="false"/>
  <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
- <welcome file="welcome.rtfd" uti="com.apple.rtfd"/>
- <conclusion file="conclusion.rtfd" uti="com.apple.rtfd"/>
+ <welcome file="welcome.rtfd" uti="com.apple.flat-rtfd"/>
+ <conclusion file="conclusion.rtfd" uti="com.apple.flat-rtfd"/>
  <volume-check script="checkChoices()"/>
  <choices-outline><line choice="adobe"/><line choice="resolve"/></choices-outline>
  <choice id="adobe" title="Adobe Premiere Pro / After Effects" description="${destinations.adobe}" selected="initialSelection('adobe')"><pkg-ref id="com.rksound.designer.pkg.adobe"/></choice>

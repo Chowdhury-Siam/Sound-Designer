@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { chmod, cp, mkdir, mkdtemp, writeFile, lstat, readdir } from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { distributionXml, componentScript, welcomeRtfd, conclusionRtfd } from "./macos-installer.mjs";
+import { distributionXml, componentScript, writeMacInstallerResources } from "./macos-installer.mjs";
 
 if (process.platform !== "darwin") throw new Error("The macOS PKG must be built and tested on macOS.");
 const root = path.resolve(import.meta.dirname, "..");
@@ -23,13 +23,7 @@ run("bun", ["resolve/scripts/verify-artifact.ts"], { ...process.env, ALLOW_MISSI
 await mkdir(path.dirname(output), { recursive: true });
 const work = await mkdtemp(path.join(path.dirname(output), ".installer-macos-"));
 const resources = path.join(work, "resources");
-await mkdir(resources);
-for (const [name, text] of [["welcome", welcomeRtfd], ["conclusion", conclusionRtfd]]) {
-  const document = path.join(resources, `${name}.rtfd`);
-  await mkdir(document);
-  for (const asset of ["adobe-symbol.png", "resolve.png"]) await cp(path.join(root, "scripts", "installer-assets", asset), path.join(document, asset));
-  await writeFile(path.join(document, "TXT.rtf"), text);
-}
+await writeMacInstallerResources(resources, path.join(work, "resource-source"));
 for (const target of ["adobe", "resolve"]) {
   const scripts = path.join(work, target);
   const files = path.join(scripts, "payload");

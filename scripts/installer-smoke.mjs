@@ -12,6 +12,7 @@ const windowsBuilder = read("scripts/build-windows-installer.mjs");
 const windowsInstaller = read("scripts/windows-installer.cs");
 const macBuilder = read("scripts/build-macos-installer.mjs");
 const packager = read("scripts/package-release.mjs");
+const macResources = read("scripts/macos-installer.mjs");
 
 assert.equal(packageJson.scripts["installer:windows"], "node scripts/build-windows-installer.mjs");
 assert.equal(packageJson.scripts["installer:windows:build"], "bun run build:resolve && bun run release:package && cross-env SOUNDDESIGNER_INSTALLER_CANDIDATE=1 bun run installer:windows");
@@ -63,7 +64,7 @@ for (const [file, resource, signature] of [["adobe-symbol.png", "SoundDesigner.A
     assert.ok(page.includes(`{\\NeXTGraphic ${file} \\width560 \\height560}\\'ac`), "Logo must be a native RTFD attachment with its replacement character");
   }
 }
-assert.match(macBuilder, /for \(const asset of \["adobe-symbol.png", "resolve.png"\]\) await cp/);
+assert.match(macResources, /for \(const asset of \["adobe-symbol.png", "resolve.png"\]\) await cp/);
 assert.match(welcomeRtfd, /Premiere Pro \/ After Effects/);
 assert.match(windowsInstaller, /class SoftwareChoice : CheckBox/);
 const productStyles = read("src/js/main/main.scss");
@@ -83,11 +84,14 @@ assert.match(macBuilder, /notarytool/);
 assert.match(macBuilder, /stapler/);
 for (const job of ["shared-static", "adobe-build", "resolve-build", "windows-installer", "macos-installer", "artifact-audit", "native-certification"]) assert.match(workflow, new RegExp(`^  ${job}:`, "m"));
 const xml = distributionXml("1.0.4");
-assert.match(xml, /<welcome file="welcome.rtfd" uti="com.apple.rtfd"/);
-assert.match(xml, /<conclusion file="conclusion.rtfd" uti="com.apple.rtfd"/);
-assert.match(macBuilder, /\[\["welcome", welcomeRtfd\], \["conclusion", conclusionRtfd\]\]/);
-assert.match(macBuilder, /path.join\(document, asset\)/, "Logos must be inside each RTFD bundle");
-assert.match(macBuilder, /writeFile\(path.join\(document, "TXT.rtf"\), text\)/);
+assert.match(xml, /<welcome file="welcome.rtfd" uti="com.apple.flat-rtfd"/);
+assert.match(xml, /<conclusion file="conclusion.rtfd" uti="com.apple.flat-rtfd"/);
+assert.match(macResources, /\[\["welcome", welcomeRtfd\], \["conclusion", conclusionRtfd\]\]/);
+assert.match(macResources, /path.join\(document, asset\)/, "Logos must be inside each RTFD bundle");
+assert.match(macResources, /writeFile\(path.join\(document, "TXT.rtf"\), text\)/);
+assert.match(macResources, /wrapper.serializedRepresentation/);
+assert.match(macResources, /!info.isFile\(\) \|\| !info.size/);
+assert.match(macBuilder, /writeMacInstallerResources\(resources, path.join\(work, "resource-source"\)\)/);
 for (const page of [welcomeRtfd, conclusionRtfd]) {
   assert.ok(page.startsWith("{\\rtf1"));
   assert.match(page, /\\fs40/, "Use a compact 20pt heading, not an oversized HTML heading");
