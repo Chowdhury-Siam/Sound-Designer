@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
-import { distributionXml, componentScript, welcomeRtfd, conclusionRtfd } from "./macos-installer.mjs";
+import { distributionXml, componentScript, welcomeRtfd, conclusionRtfd, flattenRtfdScript } from "./macos-installer.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
@@ -72,12 +72,16 @@ assert.match(macResources, /cell.verticalAlignment !== \$.NSTextBlockMiddleAlign
 assert.match(macResources, /cells\[0\].startingColumn !== 0 \|\| cells\[1\].startingColumn !== 1/);
 assert.match(macResources, /cells\[0\].startingRow !== cells\[1\].startingRow/);
 assert.match(macResources, /cells\[0\].table.isEqual\(cells\[1\].table\)/);
+assert.match(flattenRtfdScript, /initWithTableStartingRowRowSpanStartingColumnColumnSpan\(table, 0, 1, column, 1\)/);
+assert.match(flattenRtfdScript, /paragraph.textBlocks = \$\(\[cell\]\)/);
+assert.match(flattenRtfdScript, /setWidthTypeForLayerEdge\(12, \$.NSTextBlockAbsoluteValueType, \$.NSTextBlockPadding, \$.NSMaxXEdge\)/);
+assert.match(flattenRtfdScript, /RTFDFileWrapperFromRangeDocumentAttributes/);
+assert.ok(flattenRtfdScript.indexOf("data = wrapper.serializedRepresentation;", flattenRtfdScript.indexOf("RTFDFileWrapperFromRangeDocumentAttributes")) < flattenRtfdScript.indexOf("Installer software table was lost"), "Validate serialized cells after AppKit creates the table");
+new vm.Script(flattenRtfdScript); // Parse the embedded script too, not only its outer JS module.
 for (const page of [welcomeRtfd, conclusionRtfd]) {
   assert.ok(page.includes("\\b Premiere Pro / After Effects\\b0\\line\\fs22 "));
   assert.ok(page.includes("\\b DaVinci Resolve Studio\\b0\\line\\fs22 "));
-  assert.equal((page.match(/\\trowd/g) || []).length, 2, "Each logo and two-line label share a native table row");
-  assert.equal((page.match(/\\clvertalc/g) || []).length, 4, "Both cells of both rows must be vertically centered");
-  assert.equal((page.match(/\\clpadl240\\clpadfl3/g) || []).length, 2, "Keep a 12pt gap between logos and text");
+  assert.doesNotMatch(page, /\\trowd|\\cell(?:x|\b)/, "AppKit, not hand-written RTF markup, must construct table cells");
   assert.doesNotMatch(page, /\\tab|\\dn\d+/, "Do not approximate block alignment with tabs or baseline offsets");
   assert.doesNotMatch(page, /\\b SoundDesigner\\b0|Before you install/, "No duplicate brand eyebrow or unnecessary section heading");
 }

@@ -18,13 +18,10 @@ const brandedPage = (heading, content) => String.raw`{\rtf1\ansi\ansicpg1252\coc
 \pard\fs22\sa160 ${content}
 }`;
 
-// Center the logo against the entire title/description block, not a single
-// text baseline. A borderless native table keeps wrapped descriptions aligned.
-const softwareRow = (logo, title, description) => String.raw`\trowd\trgaph0\trleft0\trrh960
-\clvertalc\clpadl0\clpadfl3\clpadr0\clpadfr3\cellx640
-\clvertalc\clpadl240\clpadfl3\clpadr0\clpadfr3\cellx7200
-\pard\intbl\sb0\sa0\fs22 {{\NeXTGraphic ${logo} \width640 \height640}\'ac}\cell
-\pard\intbl\sb0\sa0\fs24\b ${title}\b0\line\fs22 ${description}\cell\row
+// AppKit puts these adjacent paragraphs in two vertically centered table
+// cells during serialization. Do not rely on imported RTF cell boundaries.
+const softwareRow = (logo, title, description) => String.raw`\pard\sb0\sa0\fs22 {{\NeXTGraphic ${logo} \width640 \height640}\'ac}\par
+\pard\sb0\sa0\fs24\b ${title}\b0\line\fs22 ${description}\par
 \pard\fs8\sb0\sa0\par`;
 
 export const welcomeRtfd = brandedPage("Choose your software", String.raw`Select Adobe, Resolve, or both in \b Customize\b0 .\par
@@ -46,23 +43,48 @@ function run(argv) {
   var wrapper = $.NSFileWrapper.alloc.initWithURLOptionsError($.NSURL.fileURLWithPath(argv[0]), 0, error);
   if (!wrapper || !wrapper.isDirectory) throw new Error('Cannot read RTFD source');
   var data = wrapper.serializedRepresentation;
-  var text = $.NSAttributedString.alloc.initWithRTFDDocumentAttributes(data, null);
+  var text = $.NSMutableAttributedString.alloc.initWithRTFDDocumentAttributes(data, null);
   if (!text || !text.length || !text.containsAttachments) throw new Error('Flattened RTFD lost its text or logo attachments');
   var plain = ObjC.unwrap(text.string);
   if (plain.indexOf('Premiere Pro / After Effects') < 0 || plain.indexOf('DaVinci Resolve Studio') < 0) throw new Error('Installer software names are missing');
   ['Premiere Pro / After Effects', 'DaVinci Resolve Studio'].forEach(function (title) {
     var index = text.string.rangeOfString(title).location;
     var logoIndex = plain.lastIndexOf('\uFFFC', index);
-    var cells = [logoIndex, index].map(function (position) {
+    var table = $.NSTextTable.alloc.init;
+    table.numberOfColumns = 2;
+    table.setContentWidthType(100, $.NSTextBlockPercentageValueType);
+    [logoIndex, index].forEach(function (position, column) {
       if (position < 0) throw new Error('Installer logo is missing: ' + title);
       var attributes = text.attributesAtIndexEffectiveRange(position, null);
-      var paragraph = attributes.objectForKey($.NSParagraphStyleAttributeName);
+      var paragraph = attributes.objectForKey($.NSParagraphStyleAttributeName).mutableCopy;
+      var cell = $.NSTextTableBlock.alloc.initWithTableStartingRowRowSpanStartingColumnColumnSpan(table, 0, 1, column, 1);
+      cell.verticalAlignment = $.NSTextBlockMiddleAlignment;
+      if (column === 0) {
+        cell.setContentWidthType(32, $.NSTextBlockAbsoluteValueType);
+        cell.setWidthTypeForLayerEdge(12, $.NSTextBlockAbsoluteValueType, $.NSTextBlockPadding, $.NSMaxXEdge);
+      }
+      paragraph.textBlocks = $([cell]);
+      text.addAttributeValueRange($.NSParagraphStyleAttributeName, paragraph, text.string.paragraphRangeForRange($.NSMakeRange(position, 1)));
+    });
+  });
+  // Let AppKit write its own RTF table dialect, then validate the actual
+  // flattened resource, not just the mutable objects used to construct it.
+  wrapper = text.RTFDFileWrapperFromRangeDocumentAttributes($.NSMakeRange(0, text.length), $({}));
+  data = wrapper.serializedRepresentation;
+  text = $.NSAttributedString.alloc.initWithRTFDDocumentAttributes(data, null);
+  if (!text || !text.length || !text.containsAttachments) throw new Error('Serialized installer lost its text or logo attachments');
+  plain = ObjC.unwrap(text.string);
+  ['Premiere Pro / After Effects', 'DaVinci Resolve Studio'].forEach(function (title) {
+    var index = text.string.rangeOfString(title).location;
+    var cells = [plain.lastIndexOf('\uFFFC', index), index].map(function (position) {
+      if (position < 0) throw new Error('Serialized installer logo is missing: ' + title);
+      var paragraph = text.attributesAtIndexEffectiveRange(position, null).objectForKey($.NSParagraphStyleAttributeName);
       if (!paragraph || !paragraph.textBlocks.count) throw new Error('Installer software table was lost: ' + title);
       var cell = paragraph.textBlocks.objectAtIndex(0);
       if (cell.verticalAlignment !== $.NSTextBlockMiddleAlignment) throw new Error('Installer software cell is not vertically centered: ' + title);
       return cell;
     });
-    if (cells[0].startingColumn !== 0 || cells[1].startingColumn !== 1 || !cells[0].table.isEqual(cells[1].table) || cells[0].startingRow !== cells[1].startingRow) throw new Error('Installer logo and text must share one table row: ' + title);
+    if (cells[0].startingColumn !== 0 || cells[1].startingColumn !== 1 || !cells[0].table.isEqual(cells[1].table) || cells[0].startingRow !== cells[1].startingRow) throw new Error('Installer logo and text must share one table row: ' + title + ' (columns ' + cells[0].startingColumn + '/' + cells[1].startingColumn + ', rows ' + cells[0].startingRow + '/' + cells[1].startingRow + ', same table ' + cells[0].table.isEqual(cells[1].table) + ')');
   });
   ['adobe-symbol.png', 'resolve.png'].forEach(function (name) {
     var file = wrapper.fileWrappers.objectForKey(name);
