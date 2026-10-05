@@ -18,10 +18,14 @@ const brandedPage = (heading, content) => String.raw`{\rtf1\ansi\ansicpg1252\coc
 \pard\fs22\sa160 ${content}
 }`;
 
-// Explicit 44pt tab + hanging indent: wrapped titles stay in the text column,
-// rather than using default tab stops or a separate paragraph for each logo.
-const softwareRow = (logo, title, description) => String.raw`\pard\li880\fi-880\tx880\sb240\sa20\fs24\dn12 {{\NeXTGraphic ${logo} \width640 \height640}\'ac}\dn0\tab\b ${title}\b0\par
-\pard\li880\fi0\fs22\sa80 ${description}\par`;
+// Center the logo against the entire title/description block, not a single
+// text baseline. A borderless native table keeps wrapped descriptions aligned.
+const softwareRow = (logo, title, description) => String.raw`\trowd\trgaph0\trleft0\trrh960
+\clvertalc\clpadl0\clpadfl3\clpadr0\clpadfr3\cellx640
+\clvertalc\clpadl240\clpadfl3\clpadr0\clpadfr3\cellx7200
+\pard\intbl\sb0\sa0\fs22 {{\NeXTGraphic ${logo} \width640 \height640}\'ac}\cell
+\pard\intbl\sb0\sa0\fs24\b ${title}\b0\line\fs22 ${description}\cell\row
+\pard\fs8\sb0\sa0\par`;
 
 export const welcomeRtfd = brandedPage("Choose your software", String.raw`Select Adobe, Resolve, or both in \b Customize\b0 .\par
 ${softwareRow("adobe-symbol.png", "Premiere Pro / After Effects", "Inside your Adobe editing workspace.")}
@@ -48,9 +52,17 @@ function run(argv) {
   if (plain.indexOf('Premiere Pro / After Effects') < 0 || plain.indexOf('DaVinci Resolve Studio') < 0) throw new Error('Installer software names are missing');
   ['Premiere Pro / After Effects', 'DaVinci Resolve Studio'].forEach(function (title) {
     var index = text.string.rangeOfString(title).location;
-    var attributes = text.attributesAtIndexEffectiveRange(index, null);
-    var paragraph = attributes.objectForKey($.NSParagraphStyleAttributeName);
-    if (!paragraph || paragraph.headIndent !== 44 || paragraph.firstLineHeadIndent !== 0 || !paragraph.tabStops.count || paragraph.tabStops.objectAtIndex(0).location !== 44) throw new Error('Installer software column alignment was lost: ' + title);
+    var logoIndex = plain.lastIndexOf('\uFFFC', index);
+    var cells = [logoIndex, index].map(function (position) {
+      if (position < 0) throw new Error('Installer logo is missing: ' + title);
+      var attributes = text.attributesAtIndexEffectiveRange(position, null);
+      var paragraph = attributes.objectForKey($.NSParagraphStyleAttributeName);
+      if (!paragraph || !paragraph.textBlocks.count) throw new Error('Installer software table was lost: ' + title);
+      var cell = paragraph.textBlocks.objectAtIndex(0);
+      if (cell.verticalAlignment !== $.NSTextBlockMiddleAlignment) throw new Error('Installer software cell is not vertically centered: ' + title);
+      return cell;
+    });
+    if (cells[0].startingColumn !== 0 || cells[1].startingColumn !== 1 || !cells[0].table.isEqual(cells[1].table) || cells[0].startingRow !== cells[1].startingRow) throw new Error('Installer logo and text must share one table row: ' + title);
   });
   ['adobe-symbol.png', 'resolve.png'].forEach(function (name) {
     var file = wrapper.fileWrappers.objectForKey(name);

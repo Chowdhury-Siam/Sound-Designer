@@ -68,14 +68,17 @@ assert.match(macResources, /for \(const asset of \["adobe-symbol.png", "resolve.
 assert.match(macResources, /"--resampleHeightWidth", "32", "32", "--setProperty", "dpiWidth", "72", "--setProperty", "dpiHeight", "72", copy/);
 assert.match(macResources, /Math.abs\(image.size.width - 32\) > 0.1/);
 assert.match(macResources, /Math.abs\(image.size.height - 32\) > 0.1/);
-assert.match(macResources, /paragraph.headIndent !== 44/);
-assert.match(macResources, /paragraph.firstLineHeadIndent !== 0/);
-assert.match(macResources, /paragraph.tabStops.objectAtIndex\(0\).location !== 44/);
+assert.match(macResources, /cell.verticalAlignment !== \$.NSTextBlockMiddleAlignment/);
+assert.match(macResources, /cells\[0\].startingColumn !== 0 \|\| cells\[1\].startingColumn !== 1/);
+assert.match(macResources, /cells\[0\].startingRow !== cells\[1\].startingRow/);
+assert.match(macResources, /cells\[0\].table.isEqual\(cells\[1\].table\)/);
 for (const page of [welcomeRtfd, conclusionRtfd]) {
-  assert.ok(page.includes("\\tab\\b Premiere Pro / After Effects\\b0\\par"));
-  assert.ok(page.includes("\\tab\\b DaVinci Resolve Studio\\b0\\par"));
-  assert.equal((page.match(/\\li880\\fi-880\\tx880/g) || []).length, 2, "Both logo rows need an explicit 44pt text column and hanging indent");
-  assert.equal((page.match(/\\pard\\li880\\fi0\\fs22/g) || []).length, 2, "Descriptions align with software names");
+  assert.ok(page.includes("\\b Premiere Pro / After Effects\\b0\\line\\fs22 "));
+  assert.ok(page.includes("\\b DaVinci Resolve Studio\\b0\\line\\fs22 "));
+  assert.equal((page.match(/\\trowd/g) || []).length, 2, "Each logo and two-line label share a native table row");
+  assert.equal((page.match(/\\clvertalc/g) || []).length, 4, "Both cells of both rows must be vertically centered");
+  assert.equal((page.match(/\\clpadl240\\clpadfl3/g) || []).length, 2, "Keep a 12pt gap between logos and text");
+  assert.doesNotMatch(page, /\\tab|\\dn\d+/, "Do not approximate block alignment with tabs or baseline offsets");
   assert.doesNotMatch(page, /\\b SoundDesigner\\b0|Before you install/, "No duplicate brand eyebrow or unnecessary section heading");
 }
 assert.match(welcomeRtfd, /Premiere Pro \/ After Effects/);
