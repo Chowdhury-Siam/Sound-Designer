@@ -19,15 +19,16 @@ const brandedPage = (heading, content) => String.raw`{\rtf1\ansi\ansicpg1252\coc
 \pard\fs22\sa120 ${content}
 }`;
 
-const softwareRow = (logo, title, description) => String.raw`\pard\sb100\sa40\fs24 {{\NeXTGraphic ${logo} \width560 \height560}\'ac}\tab\b ${title}\b0\par
-\pard\li760\fs22\sa120 ${description}\par`;
+const softwareRow = (logo, title, description) => String.raw`\pard\sb80\sa40\fs24 {{\NeXTGraphic ${logo} \width640 \height640}\'ac}\par
+\pard\fs24\b ${title}\b0\par
+\pard\fs22\sa100 ${description}\par`;
 
 export const welcomeRtfd = brandedPage("Choose your software", String.raw`Select Adobe, Resolve, or both in \b Customize\b0 .\par
 ${softwareRow("adobe-symbol.png", "Premiere Pro / After Effects", "Inside your Adobe editing workspace.")}
 ${softwareRow("resolve.png", "DaVinci Resolve Studio", "Inside Workflow Integrations.")}
 \pard\fs22\sb100\sa100\b Before you install\b0\par
-Save your work and quit the applications you select, including any open background windows.\par
-Your audio libraries, memories and settings stay untouched.\par`);
+Save your work. Quit selected applications with Command-Q.\par
+Libraries, memories and settings stay untouched.\par`);
 
 export const conclusionRtfd = brandedPage("Ready to create", String.raw`Open the applications you selected, then launch SoundDesigner:\par
 ${softwareRow("adobe-symbol.png", "Premiere Pro / After Effects", "Window > Extensions (or Extensions Legacy) > SoundDesigner")}
@@ -44,6 +45,13 @@ function run(argv) {
   var data = wrapper.serializedRepresentation;
   var text = $.NSAttributedString.alloc.initWithRTFDDocumentAttributes(data, null);
   if (!text || !text.length || !text.containsAttachments) throw new Error('Flattened RTFD lost its text or logo attachments');
+  var plain = ObjC.unwrap(text.string);
+  if (plain.indexOf('Premiere Pro / After Effects') < 0 || plain.indexOf('DaVinci Resolve Studio') < 0) throw new Error('Installer software names are missing');
+  ['adobe-symbol.png', 'resolve.png'].forEach(function (name) {
+    var file = wrapper.fileWrappers.objectForKey(name);
+    var image = $.NSImage.alloc.initWithData(file.regularFileContents);
+    if (!image || image.size.width > 32 || image.size.height > 32) throw new Error('Installer logo exceeds 32pt: ' + name);
+  });
   if (!data || !data.length || !data.writeToFileAtomically(argv[1], true)) throw new Error('Cannot write flattened RTFD resource');
 }`;
 
@@ -52,7 +60,15 @@ export const writeMacInstallerResources = async (resources, source) => {
   for (const [name, text] of [["welcome", welcomeRtfd], ["conclusion", conclusionRtfd]]) {
     const document = path.join(source, `${name}.rtfd`);
     await mkdir(document, { recursive: true });
-    for (const asset of ["adobe-symbol.png", "resolve.png"]) await cp(new URL(`./installer-assets/${asset}`, import.meta.url), path.join(document, asset));
+    for (const asset of ["adobe-symbol.png", "resolve.png"]) {
+      const copy = path.join(document, asset);
+      await cp(new URL(`./installer-assets/${asset}`, import.meta.url), copy);
+      // Installer can use intrinsic PNG dimensions instead of RTF width/height.
+      // Resize only the staged copy, never the shared high-resolution asset.
+      const resized = spawnSync("/usr/bin/sips", ["--resampleHeightWidth", "32", "32", copy], { stdio: "inherit" });
+      if (resized.error) throw resized.error;
+      if (resized.status !== 0) throw new Error(`Resizing installer logo failed (${resized.status}).`);
+    }
     await writeFile(path.join(document, "TXT.rtf"), text);
     const output = path.join(resources, `${name}.rtfd`);
     const result = spawnSync("/usr/bin/osascript", ["-l", "JavaScript", "-e", flattenRtfdScript, document, output], { stdio: "inherit" });

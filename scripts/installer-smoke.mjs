@@ -61,10 +61,17 @@ for (const [file, resource, signature] of [["adobe-symbol.png", "SoundDesigner.A
   assert.ok(windowsBuilder.includes(resource));
   assert.ok(windowsInstaller.includes(`LoadLogo("${resource}")`));
   for (const page of [welcomeRtfd, conclusionRtfd]) {
-    assert.ok(page.includes(`{\\NeXTGraphic ${file} \\width560 \\height560}\\'ac`), "Logo must be a native RTFD attachment with its replacement character");
+    assert.ok(page.includes(`{\\NeXTGraphic ${file} \\width640 \\height640}\\'ac`), "Logo must be a native RTFD attachment with its replacement character");
   }
 }
-assert.match(macResources, /for \(const asset of \["adobe-symbol.png", "resolve.png"\]\) await cp/);
+assert.match(macResources, /for \(const asset of \["adobe-symbol.png", "resolve.png"\]\)/);
+assert.match(macResources, /"--resampleHeightWidth", "32", "32", copy/);
+assert.match(macResources, /image.size.width > 32 \|\| image.size.height > 32/);
+for (const page of [welcomeRtfd, conclusionRtfd]) {
+  assert.ok(page.includes("\\pard\\fs24\\b Premiere Pro / After Effects\\b0\\par"));
+  assert.ok(page.includes("\\pard\\fs24\\b DaVinci Resolve Studio\\b0\\par"));
+  assert.doesNotMatch(page, /\\tab/, "Names must not be pushed outside the pane by image width or default tab stops");
+}
 assert.match(welcomeRtfd, /Premiere Pro \/ After Effects/);
 assert.match(windowsInstaller, /class SoftwareChoice : CheckBox/);
 const productStyles = read("src/js/main/main.scss");
@@ -99,7 +106,7 @@ for (const page of [welcomeRtfd, conclusionRtfd]) {
   assert.doesNotMatch(page, /<html|<script|https?:\/\//i);
 }
 assert.match(welcomeRtfd, /Customize/);
-assert.match(welcomeRtfd, /Save your work and quit/);
+assert.match(welcomeRtfd, /Quit selected applications with Command-Q/);
 assert.match(conclusionRtfd, /Workflow Integrations/);
 assert.match(xml, /<pkg-ref id="com.rksound.designer.pkg.adobe"><must-close><app id="com.adobe.AfterEffects"\/><app id="com.adobe.PremierePro"\/><\/must-close>/);
 assert.match(xml, /<pkg-ref id="com.sound.designer.pkg.resolve"><must-close><app id="com.blackmagic-design.DaVinciResolve"\/><\/must-close>/);
