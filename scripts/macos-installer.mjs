@@ -37,7 +37,15 @@ ${softwareRow("resolve.png", "DaVinci Resolve Studio", "Workspace > Workflow Int
 
 // productbuild reads declared welcome/conclusion resources as files, not
 // directory wrappers. Serialize the RTFD wrapper using Apple's native format.
+export function hasSharedInstallerRow(cells) {
+  // JXA may return boxed NSNumber values: compare their numeric values.
+  return Number(cells[0].startingColumn) === 0 && Number(cells[1].startingColumn) === 1 &&
+    Number(cells[0].startingRow) === Number(cells[1].startingRow) &&
+    Number(cells[0].table.isEqual(cells[1].table)) === 1;
+}
+
 export const flattenRtfdScript = `ObjC.import('AppKit');
+var hasSharedInstallerRow = ${hasSharedInstallerRow.toString()};
 function run(argv) {
   var error = Ref();
   var wrapper = $.NSFileWrapper.alloc.initWithURLOptionsError($.NSURL.fileURLWithPath(argv[0]), 0, error);
@@ -79,12 +87,12 @@ function run(argv) {
     var cells = [plain.lastIndexOf('\uFFFC', index), index].map(function (position) {
       if (position < 0) throw new Error('Serialized installer logo is missing: ' + title);
       var paragraph = text.attributesAtIndexEffectiveRange(position, null).objectForKey($.NSParagraphStyleAttributeName);
-      if (!paragraph || !paragraph.textBlocks.count) throw new Error('Installer software table was lost: ' + title);
+      if (!paragraph || Number(paragraph.textBlocks.count) === 0) throw new Error('Installer software table was lost: ' + title);
       var cell = paragraph.textBlocks.objectAtIndex(0);
-      if (cell.verticalAlignment !== $.NSTextBlockMiddleAlignment) throw new Error('Installer software cell is not vertically centered: ' + title);
+      if (Number(cell.verticalAlignment) !== Number($.NSTextBlockMiddleAlignment)) throw new Error('Installer software cell is not vertically centered: ' + title);
       return cell;
     });
-    if (cells[0].startingColumn !== 0 || cells[1].startingColumn !== 1 || !cells[0].table.isEqual(cells[1].table) || cells[0].startingRow !== cells[1].startingRow) throw new Error('Installer logo and text must share one table row: ' + title + ' (columns ' + cells[0].startingColumn + '/' + cells[1].startingColumn + ', rows ' + cells[0].startingRow + '/' + cells[1].startingRow + ', same table ' + cells[0].table.isEqual(cells[1].table) + ')');
+    if (!hasSharedInstallerRow(cells)) throw new Error('Installer logo and text must share one table row: ' + title + ' (columns ' + cells[0].startingColumn + '/' + cells[1].startingColumn + ', rows ' + cells[0].startingRow + '/' + cells[1].startingRow + ', same table ' + cells[0].table.isEqual(cells[1].table) + ')');
   });
   ['adobe-symbol.png', 'resolve.png'].forEach(function (name) {
     var file = wrapper.fileWrappers.objectForKey(name);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
-import { distributionXml, componentScript, welcomeRtfd, conclusionRtfd, flattenRtfdScript } from "./macos-installer.mjs";
+import { distributionXml, componentScript, welcomeRtfd, conclusionRtfd, flattenRtfdScript, hasSharedInstallerRow } from "./macos-installer.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
@@ -68,10 +68,15 @@ assert.match(macResources, /for \(const asset of \["adobe-symbol.png", "resolve.
 assert.match(macResources, /"--resampleHeightWidth", "32", "32", "--setProperty", "dpiWidth", "72", "--setProperty", "dpiHeight", "72", copy/);
 assert.match(macResources, /Math.abs\(image.size.width - 32\) > 0.1/);
 assert.match(macResources, /Math.abs\(image.size.height - 32\) > 0.1/);
-assert.match(macResources, /cell.verticalAlignment !== \$.NSTextBlockMiddleAlignment/);
-assert.match(macResources, /cells\[0\].startingColumn !== 0 \|\| cells\[1\].startingColumn !== 1/);
-assert.match(macResources, /cells\[0\].startingRow !== cells\[1\].startingRow/);
-assert.match(macResources, /cells\[0\].table.isEqual\(cells\[1\].table\)/);
+assert.match(flattenRtfdScript, /Number\(cell.verticalAlignment\) !== Number\(\$.NSTextBlockMiddleAlignment\)/);
+assert.match(flattenRtfdScript, /if \(!hasSharedInstallerRow\(cells\)\)/);
+// Reproduce the Mac log: values print as 0/1, but boxed 0 !== primitive 0.
+const nativeTable = { isEqual(other) { return Object(this === other); } };
+const nativeCells = [0, 1].map(column => ({ startingColumn: Object(column), startingRow: Object(0), table: nativeTable }));
+assert.equal(hasSharedInstallerRow(nativeCells), true);
+assert.equal(hasSharedInstallerRow([{ ...nativeCells[0], startingColumn: Object(1) }, nativeCells[1]]), false);
+assert.equal(hasSharedInstallerRow([nativeCells[0], { ...nativeCells[1], startingRow: Object(1) }]), false);
+assert.equal(hasSharedInstallerRow([nativeCells[0], { ...nativeCells[1], table: {} }]), false);
 assert.match(flattenRtfdScript, /initWithTableStartingRowRowSpanStartingColumnColumnSpan\(table, 0, 1, column, 1\)/);
 assert.match(flattenRtfdScript, /paragraph.textBlocks = \$\(\[cell\]\)/);
 assert.match(flattenRtfdScript, /setWidthTypeForLayerEdge\(12, \$.NSTextBlockAbsoluteValueType, \$.NSTextBlockPadding, \$.NSMaxXEdge\)/);
