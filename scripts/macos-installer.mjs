@@ -3,40 +3,32 @@ const destinations = {
   resolve: "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Workflow Integration Plugins/com.sound.designer.resolve",
 };
 
-// Static, self-contained Installer resources. No web fonts, scripts or fake controls.
-const brandedPage = (heading, content) => `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SoundDesigner Setup</title><style>
-body { margin:0; padding:20px; background:#1d1d1d; color:#e5e5e5; font:13px/1.5 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
-.brand { margin:0 0 12px; font-size:14px; font-weight:600; }
-.caption { color:#b8b8b8; font-size:11px; }
-h1 { margin:0 0 8px; font-size:26px; line-height:1.2; font-weight:600; letter-spacing:-0.5px; }
-p { margin:8px 0 12px; color:#b8b8b8; }
-.card { width:100%; margin:10px 0; border:1px solid #4b4b4b; border-radius:9px; background:#292929; border-spacing:0; }
-.card td { padding:12px; vertical-align:middle; }
-.tile { width:42px; text-align:center; color:#b8b8b8; background:#242424; font-size:11px; font-weight:600; border-radius:6px; }
-.tile img { width:32px; height:32px; }
-.card strong { display:block; font-size:14px; }
-.note { padding:12px; border-left:3px solid #0a6fd8; background:#242424; }
-.wave { height:38px; line-height:38px; margin:12px 0 18px; border-bottom:1px solid #303030; }
-.wave span { display:inline-block; width:3px; margin-right:4px; vertical-align:middle; background:#3a91e5; border-radius:2px; }
-</style></head><body>
-<div class="brand">SoundDesigner <span class="caption">&nbsp; ADOBE + RESOLVE SETUP</span></div>
-<div class="wave" aria-hidden="true">${[8, 14, 24, 18, 38, 28, 20, 12, 26, 34, 24, 16, 8].map(height => `<span style="height:${height}px"></span>`).join("")}</div>
-<h1>${heading}</h1>${content}</body></html>`;
+// Installer uses native text rendering, not a browser: RTFD keeps fonts and
+// image attachments together without relying on HTML/CSS or relative URLs.
+// Automatic text/background colors respect the user's light/dark appearance.
+const brandedPage = (heading, content) => String.raw`{\rtf1\ansi\ansicpg1252\cocoartf2709
+{\fonttbl\f0\fswiss Helvetica;}
+{\colortbl;\red10\green111\blue216;}
+\vieww10000\viewh8000\paperw10000\paperh8000\margl240\margr240\margt180\margb180
+\pard\f0\fs22\cf1\b SoundDesigner\b0\cf0\par
+\pard\sb140\sa100\fs40\b ${heading}\b0\par
+\pard\fs22\sa120 ${content}
+}`;
 
-export const welcomeHtml = brandedPage("Choose your software", `
-<p>Bring SoundDesigner into your workspace. Select one or both in <strong>Customize</strong>.</p>
-<table class="card" role="presentation"><tr><td class="tile"><img src="adobe-symbol.png" alt="Adobe"></td><td><strong>Premiere Pro / After Effects</strong><span class="caption">Adobe editing workspace</span></td></tr></table>
-<table class="card" role="presentation"><tr><td class="tile"><img src="resolve.png" alt="DaVinci Resolve"></td><td><strong>DaVinci Resolve Studio</strong><span class="caption">Workflow Integrations</span></td></tr></table>
-<p class="note">Your audio libraries, memories and settings stay untouched.</p>
-<p class="caption">Close your selected applications before installing. Installs for all users; macOS will ask for permission.</p>`);
+const softwareRow = (logo, title, description) => String.raw`\pard\sb100\sa40\fs24 {{\NeXTGraphic ${logo} \width560 \height560}\'ac}\tab\b ${title}\b0\par
+\pard\li760\fs22\sa120 ${description}\par`;
 
-export const conclusionHtml = brandedPage("You're ready to create.", `
-<p>After a successful installation, restart the applications you selected.</p>
-<table class="card" role="presentation"><tr><td class="tile"><img src="adobe-symbol.png" alt="Adobe"></td><td><strong>Adobe</strong><span class="caption">Window &gt; Extensions &gt; SoundDesigner</span></td></tr></table>
-<table class="card" role="presentation"><tr><td class="tile"><img src="resolve.png" alt="DaVinci Resolve"></td><td><strong>DaVinci Resolve Studio</strong><span class="caption">Workspace &gt; Workflow Integrations &gt; SoundDesigner</span></td></tr></table>
-<p class="note">Choose your audio library folder inside SoundDesigner, on first launch or in Settings.</p>`);
+export const welcomeRtfd = brandedPage("Choose your software", String.raw`Select Adobe, Resolve, or both in \b Customize\b0 .\par
+${softwareRow("adobe-symbol.png", "Premiere Pro / After Effects", "Inside your Adobe editing workspace.")}
+${softwareRow("resolve.png", "DaVinci Resolve Studio", "Inside Workflow Integrations.")}
+\pard\fs22\sb100\sa100\b Before you install\b0\par
+Save your work and quit the applications you select, including any open background windows.\par
+Your audio libraries, memories and settings stay untouched.\par`);
+
+export const conclusionRtfd = brandedPage("Ready to create", String.raw`Open the applications you selected, then launch SoundDesigner:\par
+${softwareRow("adobe-symbol.png", "Premiere Pro / After Effects", "Window > Extensions (or Extensions Legacy) > SoundDesigner")}
+${softwareRow("resolve.png", "DaVinci Resolve Studio", "Workspace > Workflow Integrations > SoundDesigner")}
+\pard\fs22\sb100 Choose your audio library folder inside SoundDesigner.\par`);
 
 export const distributionXml = version => {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("Invalid installer version");
@@ -45,14 +37,16 @@ export const distributionXml = version => {
  <title>SoundDesigner</title>
  <options customize="always" require-scripts="true" allow-external-scripts="false"/>
  <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
- <welcome file="welcome.html" mime-type="text/html"/>
- <conclusion file="conclusion.html" mime-type="text/html"/>
+ <welcome file="welcome.rtfd" uti="com.apple.rtfd"/>
+ <conclusion file="conclusion.rtfd" uti="com.apple.rtfd"/>
  <volume-check script="checkChoices()"/>
  <choices-outline><line choice="adobe"/><line choice="resolve"/></choices-outline>
  <choice id="adobe" title="Adobe Premiere Pro / After Effects" description="${destinations.adobe}" selected="initialSelection('adobe')"><pkg-ref id="com.rksound.designer.pkg.adobe"/></choice>
  <choice id="resolve" title="DaVinci Resolve Studio" description="${destinations.resolve}" selected="initialSelection('resolve')"><pkg-ref id="com.sound.designer.pkg.resolve"/></choice>
  <pkg-ref id="com.rksound.designer.pkg.adobe" version="${version}" auth="Root">adobe.pkg</pkg-ref>
  <pkg-ref id="com.sound.designer.pkg.resolve" version="${version}" auth="Root">resolve.pkg</pkg-ref>
+ <pkg-ref id="com.rksound.designer.pkg.adobe"><must-close><app id="com.adobe.AfterEffects"/><app id="com.adobe.PremierePro"/></must-close></pkg-ref>
+ <pkg-ref id="com.sound.designer.pkg.resolve"><must-close><app id="com.blackmagic-design.DaVinciResolve"/></must-close></pkg-ref>
  <script><![CDATA[
  var initialized = {};
  function initialSelection(id) {
@@ -93,7 +87,7 @@ export const componentScript = (target, phase, runtimeArch = "arm64") => {
 set -euo pipefail
 umask 022
 [ "\${3:-/}" = '/' ] || { echo 'Only the running system volume is supported.' >&2; exit 1; }
-if ${hostCheck}; then echo 'Close selected ${target} applications before installing.' >&2; exit 1; fi
+if ${hostCheck}; then echo 'Save your work and quit ${target === "adobe" ? "Adobe Premiere Pro and After Effects" : "DaVinci Resolve"} (Command-Q), including background windows, then run this installer again. No files have been changed by this component.' >&2; exit 1; fi
 payload="$(/usr/bin/dirname "$0")/payload"
 validate() {
   local tree="$1"

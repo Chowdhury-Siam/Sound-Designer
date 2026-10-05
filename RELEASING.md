@@ -48,7 +48,7 @@ Runtime schema/property names such as `freesoundApiKey` are necessary code, not 
 
 ## Candidate installer handoff
 
-Do not run `release:package` or `installer:windows:build` during an unsigned handoff: both sign the Adobe ZXP. After separate permission and provision of a matching signed input, the candidate-only builders can run:
+Do not run `release:package`, `installer:windows:build` or `installer:macos` during an unsigned handoff: all sign the Adobe ZXP. After separate permission and provision of a matching signed input, the candidate-only assembly commands can run:
 
 `bun run installer:windows:build` builds both payloads, signs the ZXP, then automatically sets `SOUNDDESIGNER_INSTALLER_CANDIDATE=1` for the EXE step. Its output is an unpublished, unsigned EXE candidate, not native certification or release approval. To finish after ZXP signing already succeeded, reuse that input with `$env:SOUNDDESIGNER_INSTALLER_CANDIDATE = '1'; bun run installer:windows` instead of repeating the full chain.
 
@@ -59,7 +59,9 @@ $env:SOUNDDESIGNER_INSTALLER_OUTPUT = 'absolute-path-to-new-unpublished-candidat
 bun run installer:windows
 ```
 
-On a Mac, set the corresponding variables, `RESOLVE_WORKFLOW_NODE` and matching `RESOLVE_TARGET_ARCH`, build Resolve on that Mac, then run `bun run installer:macos`. Existing outputs are refused. No setup is executed by a builder. Candidate EXEs/PKGs are not production-signed/notarized. The ZXP is an internal input, not a public release asset.
+On a Mac, `bun run installer:macos` builds Resolve, builds/signs the Adobe ZXP, and assembles an unsigned test PKG in one fail-fast chain. Supply the existing publisher certificate with `SOUNDDESIGNER_ZXP_CERT` (or `.signing/SoundDesigner-publisher.p12`); the packager prompts for its password unless `SOUNDDESIGNER_ZXP_PASSWORD` is set. This command uses the freshly generated ZXP and automatically selects candidate mode for PKG assembly.
+
+For a prebuilt-input handoff or production assembly, set the corresponding variables and matching `RESOLVE_TARGET_ARCH`, build Resolve on that Mac, then run `bun run installer:macos:assemble`. CI uses this assembly-only command and does not sign the ZXP. Existing outputs are refused; set `SOUNDDESIGNER_INSTALLER_OUTPUT` to a new path for another build. No setup is executed by a builder. Candidate EXEs/PKGs are not production-signed/notarized. The ZXP is an internal input, not a public release asset.
 
 Windows regression tests compile the current C# worker and execute install/upgrade/rollback/traversal/wrong-module/partial-success cases in scratch directories. Mac script syntax and Distribution choice JavaScript tests do not establish native installation, receipts, permission behavior or recovery. Capture Windows presentation with `node scripts/installer-screenshot.mjs`; capture the native Mac welcome/Customize/completion pages and `pkgutil --pkg-info` outputs on the actual tested Mac. Screenshots must omit credentials and user data.
 

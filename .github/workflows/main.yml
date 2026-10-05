@@ -162,7 +162,7 @@ jobs:
         run: |
           ditto -x -k "$SOUNDDESIGNER_ZXP" "$RUNNER_TEMP/adobe-signed"
           bun scripts/artifact-audit.ts --adobe "$RUNNER_TEMP/adobe-signed" --compare-adobe dist/cep
-      - run: bun run installer:macos
+      - run: bun run installer:macos:assemble
       - uses: actions/upload-artifact@v4
         with:
           name: macos-installer-candidate

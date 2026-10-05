@@ -414,14 +414,14 @@ The signed ZXP in `release/` is the input for both platform installers:
 # Windows only: build the branded setup EXE
 bun run installer:windows
 
-# macOS only: build the native distribution PKG
+# macOS only: build Resolve, build/sign the Adobe ZXP, then assemble a test PKG
 bun run installer:macos
 
 # Validate installer scripts, paths, and workflow wiring
 bun run test:installers
 ```
 
-The EXE must be built on Windows and the PKG on macOS. Unified builds require independently audited Resolve payloads and a matching signed Adobe ZXP. `SOUNDDESIGNER_INSTALLER_CANDIDATE=1` permits unpublished test builders, not release approval. No signing happens implicitly in candidate mode. Current native gates are documented in [compatibility](COMPATIBILITY.md).
+The EXE must be built on Windows and the PKG on macOS. `installer:macos` runs the complete build chain, including Adobe ZXP signing using your existing publisher certificate and password. It creates an unsigned, unpublished test PKG, not a production-signed/notarized installer. It uses the newly generated ZXP rather than an older `SOUNDDESIGNER_ZXP` override. To assemble prebuilt inputs without signing again, set `SOUNDDESIGNER_INSTALLER_CANDIDATE=1` and run `bun run installer:macos:assemble`. Existing installer outputs are refused; choose a new path with `SOUNDDESIGNER_INSTALLER_OUTPUT`. Current native gates are documented in [compatibility](COMPATIBILITY.md).
 
 The current workflow has read-only repository permission and no signing or publishing job. Normal runs perform shared static checks and unsigned Adobe payload builds. Native candidate dispatch uses the bundled modules under `resolve/vendor/windows` and `resolve/vendor/macos`, plus a separately supplied, already signed ZXP that matches the current build. The native modules must be included in the checkout; no module Base64 secrets are required. See [RELEASING.md](RELEASING.md) for input names, manual certification, signing/notarization gates and rollback. Phase 6 authorizes none of those production operations.
 

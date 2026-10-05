@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
-import { distributionXml, componentScript, welcomeHtml, conclusionHtml } from "./macos-installer.mjs";
+import { distributionXml, componentScript, welcomeRtfd, conclusionRtfd } from "./macos-installer.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
@@ -15,7 +15,8 @@ const packager = read("scripts/package-release.mjs");
 
 assert.equal(packageJson.scripts["installer:windows"], "node scripts/build-windows-installer.mjs");
 assert.equal(packageJson.scripts["installer:windows:build"], "bun run build:resolve && bun run release:package && cross-env SOUNDDESIGNER_INSTALLER_CANDIDATE=1 bun run installer:windows");
-assert.equal(packageJson.scripts["installer:macos"], "node scripts/build-macos-installer.mjs");
+assert.equal(packageJson.scripts["installer:macos"], "bun run build:resolve && bun run release:package && cross-env SOUNDDESIGNER_INSTALLER_CANDIDATE=1 SOUNDDESIGNER_ZXP= bun run installer:macos:assemble");
+assert.equal(packageJson.scripts["installer:macos:assemble"], "node scripts/build-macos-installer.mjs");
 assert.match(workflow, /runs-on: windows-latest/);
 assert.match(workflow, /runs-on: macos-latest/);
 assert.match(workflow, /branches: \[main\]/);
@@ -33,7 +34,8 @@ assert.match(workflow, /native_candidates/);
 assert.doesNotMatch(workflow, /release-artifacts\/\*\s*$/m);
 assert.match(workflow, /bun run installer:windows/);
 assert.match(workflow, /name: windows-installer-candidate/);
-assert.match(workflow, /bun run installer:macos/);
+assert.match(workflow, /bun run installer:macos:assemble/);
+assert.doesNotMatch(workflow, /bun run installer:macos\s*$/m, "CI uses prebuilt inputs and must not invoke local ZXP signing");
 assert.match(workflow, /SoundDesigner-\*-Windows-Setup\.exe/);
 assert.match(workflow, /SoundDesigner-\*-macOS\.pkg/);
 assert.match(windowsBuilder, /SoundDesigner\.Extension\.zxp/);
@@ -57,11 +59,12 @@ for (const [file, resource, signature] of [["adobe-symbol.png", "SoundDesigner.A
   assert.equal(bytes[25], 6, "Logo PNG must include alpha rather than a white matte");
   assert.ok(windowsBuilder.includes(resource));
   assert.ok(windowsInstaller.includes(`LoadLogo("${resource}")`));
-  assert.ok(welcomeHtml.includes(`src="${file}"`));
-  assert.ok(conclusionHtml.includes(`src="${file}"`));
+  for (const page of [welcomeRtfd, conclusionRtfd]) {
+    assert.ok(page.includes(`{\\NeXTGraphic ${file} \\width560 \\height560}\\'ac`), "Logo must be a native RTFD attachment with its replacement character");
+  }
 }
 assert.match(macBuilder, /for \(const asset of \["adobe-symbol.png", "resolve.png"\]\) await cp/);
-assert.match(welcomeHtml, /Premiere Pro \/ After Effects/);
+assert.match(welcomeRtfd, /Premiere Pro \/ After Effects/);
 assert.match(windowsInstaller, /class SoftwareChoice : CheckBox/);
 const productStyles = read("src/js/main/main.scss");
 for (const [name, token] of Object.entries({ Background: "bg-0", Panel: "bg-1", Raised: "bg-2", Border: "bg-4", Text: "text-1", Secondary: "text-2", Accent: "accent", AccentStrong: "accent-strong" })) {
@@ -80,19 +83,22 @@ assert.match(macBuilder, /notarytool/);
 assert.match(macBuilder, /stapler/);
 for (const job of ["shared-static", "adobe-build", "resolve-build", "windows-installer", "macos-installer", "artifact-audit", "native-certification"]) assert.match(workflow, new RegExp(`^  ${job}:`, "m"));
 const xml = distributionXml("1.0.4");
-assert.match(xml, /<welcome file="welcome.html" mime-type="text\/html"/);
-assert.match(xml, /<conclusion file="conclusion.html" mime-type="text\/html"/);
-assert.match(macBuilder, /writeFile\(path.join\(resources, "welcome.html"\), welcomeHtml\)/);
-assert.match(macBuilder, /writeFile\(path.join\(resources, "conclusion.html"\), conclusionHtml\)/);
-for (const page of [welcomeHtml, conclusionHtml]) {
-  for (const token of ["bg-0", "bg-1", "bg-2", "bg-3", "bg-4", "text-1", "text-2", "accent", "accent-strong"]) {
-    const color = productStyles.match(new RegExp(`--${token}: (#[0-9a-f]{6});`, "i"))[1];
-    assert.ok(page.includes(color), `Mac installer page must match SoundDesigner --${token}`);
-  }
-  assert.doesNotMatch(page, /<script|<input|<button|https?:\/\//i);
+assert.match(xml, /<welcome file="welcome.rtfd" uti="com.apple.rtfd"/);
+assert.match(xml, /<conclusion file="conclusion.rtfd" uti="com.apple.rtfd"/);
+assert.match(macBuilder, /\[\["welcome", welcomeRtfd\], \["conclusion", conclusionRtfd\]\]/);
+assert.match(macBuilder, /path.join\(document, asset\)/, "Logos must be inside each RTFD bundle");
+assert.match(macBuilder, /writeFile\(path.join\(document, "TXT.rtf"\), text\)/);
+for (const page of [welcomeRtfd, conclusionRtfd]) {
+  assert.ok(page.startsWith("{\\rtf1"));
+  assert.match(page, /\\fs40/, "Use a compact 20pt heading, not an oversized HTML heading");
+  assert.match(page, /\\red10\\green111\\blue216/, "Retain the SoundDesigner blue accent");
+  assert.doesNotMatch(page, /<html|<script|https?:\/\//i);
 }
-assert.match(welcomeHtml, /Customize/);
-assert.match(conclusionHtml, /Workflow Integrations/);
+assert.match(welcomeRtfd, /Customize/);
+assert.match(welcomeRtfd, /Save your work and quit/);
+assert.match(conclusionRtfd, /Workflow Integrations/);
+assert.match(xml, /<pkg-ref id="com.rksound.designer.pkg.adobe"><must-close><app id="com.adobe.AfterEffects"\/><app id="com.adobe.PremierePro"\/><\/must-close>/);
+assert.match(xml, /<pkg-ref id="com.sound.designer.pkg.resolve"><must-close><app id="com.blackmagic-design.DaVinciResolve"\/><\/must-close>/);
 assert.match(xml, /choices-outline/);
 assert.match(xml, /com\.rksound\.designer\.pkg\.adobe/);
 assert.match(xml, /com\.sound\.designer\.pkg\.resolve/);
@@ -117,6 +123,8 @@ for (const target of ["adobe", "resolve"]) {
   assert.match(install, /trap cleanup EXIT/);
   assert.match(install, /Retained recovery backup/);
   assert.match(install, /validate "\$destination"/);
+  assert.match(install, /Save your work and quit.*Command-Q/);
+  assert.ok(install.indexOf("if /usr/bin/pgrep") < install.indexOf('/bin/mkdir -p "$parent"'), "Running applications must be rejected before filesystem mutation");
   assert.doesNotMatch(install, /storage-location|sounddesigner\.json|\/Users\/|\$HOME/);
 }
 const updaterSource = read("src/js/main/updater.ts");
