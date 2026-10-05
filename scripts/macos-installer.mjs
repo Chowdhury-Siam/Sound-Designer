@@ -13,27 +13,26 @@ const destinations = {
 const brandedPage = (heading, content) => String.raw`{\rtf1\ansi\ansicpg1252\cocoartf2709
 {\fonttbl\f0\fswiss Helvetica;}
 {\colortbl;\red10\green111\blue216;}
-\vieww10000\viewh8000\paperw10000\paperh8000\margl240\margr240\margt180\margb180
-\pard\f0\fs22\cf1\b SoundDesigner\b0\cf0\par
-\pard\sb140\sa100\fs40\b ${heading}\b0\par
-\pard\fs22\sa120 ${content}
+\vieww10000\viewh8000\paperw10000\paperh8000\margl320\margr320\margt280\margb280
+\pard\f0\fs36\cf0\sa160\b ${heading}\b0\par
+\pard\fs22\sa160 ${content}
 }`;
 
-const softwareRow = (logo, title, description) => String.raw`\pard\sb80\sa40\fs24 {{\NeXTGraphic ${logo} \width640 \height640}\'ac}\par
-\pard\fs24\b ${title}\b0\par
-\pard\fs22\sa100 ${description}\par`;
+// Explicit 44pt tab + hanging indent: wrapped titles stay in the text column,
+// rather than using default tab stops or a separate paragraph for each logo.
+const softwareRow = (logo, title, description) => String.raw`\pard\li880\fi-880\tx880\sb240\sa20\fs24\dn12 {{\NeXTGraphic ${logo} \width640 \height640}\'ac}\dn0\tab\b ${title}\b0\par
+\pard\li880\fi0\fs22\sa80 ${description}\par`;
 
 export const welcomeRtfd = brandedPage("Choose your software", String.raw`Select Adobe, Resolve, or both in \b Customize\b0 .\par
 ${softwareRow("adobe-symbol.png", "Premiere Pro / After Effects", "Inside your Adobe editing workspace.")}
 ${softwareRow("resolve.png", "DaVinci Resolve Studio", "Inside Workflow Integrations.")}
-\pard\fs22\sb100\sa100\b Before you install\b0\par
-Save your work. Quit selected applications with Command-Q.\par
-Libraries, memories and settings stay untouched.\par`);
+\pard\li0\fi0\fs22\sb360\sa80 Save your work. Quit selected applications with Command-Q.\par
+\pard\fs20\sa0 Libraries, memories and settings stay untouched.\par`);
 
 export const conclusionRtfd = brandedPage("Ready to create", String.raw`Open the applications you selected, then launch SoundDesigner:\par
 ${softwareRow("adobe-symbol.png", "Premiere Pro / After Effects", "Window > Extensions (or Extensions Legacy) > SoundDesigner")}
 ${softwareRow("resolve.png", "DaVinci Resolve Studio", "Workspace > Workflow Integrations > SoundDesigner")}
-\pard\fs22\sb100 Choose your audio library folder inside SoundDesigner.\par`);
+\pard\li0\fi0\fs22\sb360 Choose your audio library folder inside SoundDesigner.\par`);
 
 // productbuild reads declared welcome/conclusion resources as files, not
 // directory wrappers. Serialize the RTFD wrapper using Apple's native format.
@@ -47,10 +46,16 @@ function run(argv) {
   if (!text || !text.length || !text.containsAttachments) throw new Error('Flattened RTFD lost its text or logo attachments');
   var plain = ObjC.unwrap(text.string);
   if (plain.indexOf('Premiere Pro / After Effects') < 0 || plain.indexOf('DaVinci Resolve Studio') < 0) throw new Error('Installer software names are missing');
+  ['Premiere Pro / After Effects', 'DaVinci Resolve Studio'].forEach(function (title) {
+    var index = text.string.rangeOfString(title).location;
+    var attributes = text.attributesAtIndexEffectiveRange(index, null);
+    var paragraph = attributes.objectForKey($.NSParagraphStyleAttributeName);
+    if (!paragraph || paragraph.headIndent !== 44 || paragraph.firstLineHeadIndent !== 0 || !paragraph.tabStops.count || paragraph.tabStops.objectAtIndex(0).location !== 44) throw new Error('Installer software column alignment was lost: ' + title);
+  });
   ['adobe-symbol.png', 'resolve.png'].forEach(function (name) {
     var file = wrapper.fileWrappers.objectForKey(name);
     var image = $.NSImage.alloc.initWithData(file.regularFileContents);
-    if (!image || image.size.width > 32 || image.size.height > 32) throw new Error('Installer logo exceeds 32pt: ' + name);
+    if (!image || Math.abs(image.size.width - 32) > 0.1 || Math.abs(image.size.height - 32) > 0.1) throw new Error('Installer logo must be 32pt at 72 DPI: ' + name);
   });
   if (!data || !data.length || !data.writeToFileAtomically(argv[1], true)) throw new Error('Cannot write flattened RTFD resource');
 }`;
@@ -64,8 +69,9 @@ export const writeMacInstallerResources = async (resources, source) => {
       const copy = path.join(document, asset);
       await cp(new URL(`./installer-assets/${asset}`, import.meta.url), copy);
       // Installer can use intrinsic PNG dimensions instead of RTF width/height.
-      // Resize only the staged copy, never the shared high-resolution asset.
-      const resized = spawnSync("/usr/bin/sips", ["--resampleHeightWidth", "32", "32", copy], { stdio: "inherit" });
+      // Normalize DPI too: the Adobe source is ~768 DPI, so a 32px copy at
+      // that density is only ~3pt in AppKit. Keep shared source assets intact.
+      const resized = spawnSync("/usr/bin/sips", ["--resampleHeightWidth", "32", "32", "--setProperty", "dpiWidth", "72", "--setProperty", "dpiHeight", "72", copy], { stdio: "inherit" });
       if (resized.error) throw resized.error;
       if (resized.status !== 0) throw new Error(`Resizing installer logo failed (${resized.status}).`);
     }

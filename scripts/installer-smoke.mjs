@@ -65,12 +65,18 @@ for (const [file, resource, signature] of [["adobe-symbol.png", "SoundDesigner.A
   }
 }
 assert.match(macResources, /for \(const asset of \["adobe-symbol.png", "resolve.png"\]\)/);
-assert.match(macResources, /"--resampleHeightWidth", "32", "32", copy/);
-assert.match(macResources, /image.size.width > 32 \|\| image.size.height > 32/);
+assert.match(macResources, /"--resampleHeightWidth", "32", "32", "--setProperty", "dpiWidth", "72", "--setProperty", "dpiHeight", "72", copy/);
+assert.match(macResources, /Math.abs\(image.size.width - 32\) > 0.1/);
+assert.match(macResources, /Math.abs\(image.size.height - 32\) > 0.1/);
+assert.match(macResources, /paragraph.headIndent !== 44/);
+assert.match(macResources, /paragraph.firstLineHeadIndent !== 0/);
+assert.match(macResources, /paragraph.tabStops.objectAtIndex\(0\).location !== 44/);
 for (const page of [welcomeRtfd, conclusionRtfd]) {
-  assert.ok(page.includes("\\pard\\fs24\\b Premiere Pro / After Effects\\b0\\par"));
-  assert.ok(page.includes("\\pard\\fs24\\b DaVinci Resolve Studio\\b0\\par"));
-  assert.doesNotMatch(page, /\\tab/, "Names must not be pushed outside the pane by image width or default tab stops");
+  assert.ok(page.includes("\\tab\\b Premiere Pro / After Effects\\b0\\par"));
+  assert.ok(page.includes("\\tab\\b DaVinci Resolve Studio\\b0\\par"));
+  assert.equal((page.match(/\\li880\\fi-880\\tx880/g) || []).length, 2, "Both logo rows need an explicit 44pt text column and hanging indent");
+  assert.equal((page.match(/\\pard\\li880\\fi0\\fs22/g) || []).length, 2, "Descriptions align with software names");
+  assert.doesNotMatch(page, /\\b SoundDesigner\\b0|Before you install/, "No duplicate brand eyebrow or unnecessary section heading");
 }
 assert.match(welcomeRtfd, /Premiere Pro \/ After Effects/);
 assert.match(windowsInstaller, /class SoftwareChoice : CheckBox/);
@@ -101,7 +107,7 @@ assert.match(macResources, /!info.isFile\(\) \|\| !info.size/);
 assert.match(macBuilder, /writeMacInstallerResources\(resources, path.join\(work, "resource-source"\)\)/);
 for (const page of [welcomeRtfd, conclusionRtfd]) {
   assert.ok(page.startsWith("{\\rtf1"));
-  assert.match(page, /\\fs40/, "Use a compact 20pt heading, not an oversized HTML heading");
+  assert.match(page, /\\fs36/, "Use a compact 18pt heading");
   assert.match(page, /\\red10\\green111\\blue216/, "Retain the SoundDesigner blue accent");
   assert.doesNotMatch(page, /<html|<script|https?:\/\//i);
 }
