@@ -481,42 +481,61 @@ input::placeholder {
 .library-list {
   min-height: 0;
   flex: 1;
-  padding-inline-end: 8px;
+  padding-inline-end: 6px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
+.library-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.library-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.library-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+
+.library-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
 .library-sources {
   display: grid;
-  gap: 3px;
+  gap: 4px;
 }
 
 .library-source-row {
   position: relative;
   display: grid;
-  grid-template-columns: 17px 23px minmax(0, 1fr);
+  grid-template-columns: 16px 24px minmax(0, 1fr);
   align-items: center;
-  gap: 5px;
+  gap: 7px;
   min-width: 0;
-  min-height: 38px;
-  padding: 4px 6px;
-  border: 1px solid transparent;
-  border-radius: var(--r-s);
+  min-height: 36px;
+  padding: 4px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
   color: var(--text-muted);
   cursor: pointer;
-  transition: color var(--t-fast) ease, border-color var(--t-fast) ease, background var(--t-fast) ease;
+  transition: all var(--t-fast) ease;
 }
 
 .library-source-row:hover {
-  color: var(--text-2);
+  color: var(--text-1);
   background: var(--bg-2);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .library-source-row.is-active {
-  border-color: var(--bg-3);
+  border-color: rgba(255, 255, 255, 0.09);
   color: var(--text-1);
   background: var(--bg-2);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
 }
 
 .library-source-row input {
@@ -534,44 +553,51 @@ input::placeholder {
 .source-check {
   display: grid;
   place-items: center;
-  width: 15px;
-  height: 15px;
-  border: 1px solid var(--bg-4);
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 4px;
   color: transparent;
   background: transparent;
-  transition: color var(--t-fast) ease, border-color var(--t-fast) ease, background var(--t-fast) ease;
+  transition: all var(--t-fast) ease;
 }
 
 .library-source-row.is-active .source-check {
-  border-color: rgba(255, 255, 255, 0.26);
-  color: var(--text-1);
-  background: var(--bg-4);
+  border-color: var(--accent);
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 0 5px var(--accent-soft);
 }
 
 .library-source-row input:focus-visible + .source-check {
-  outline: 1px solid var(--text-1);
+  outline: 1px solid var(--accent);
   outline-offset: 2px;
 }
 
 .source-icon {
   display: grid;
   place-items: center;
-  width: 23px;
-  height: 23px;
-  border-radius: 6px;
-  color: var(--text-2);
-  background: var(--bg-3);
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  color: #9ab4d0;
+  background: rgba(154, 180, 208, 0.09);
+  transition: transform var(--t-fast) ease;
 }
 
 .source-icon--cloud {
-  color: var(--accent-strong);
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.09);
+}
+
+.library-source-row:hover .source-icon {
+  transform: scale(1.05);
 }
 
 .local-library-branch {
-  margin: 2px 0 5px 14px;
+  margin: 2px 0 5px 12px;
   padding-inline-start: 3px;
-  border-inline-start: 1px solid var(--bg-3);
+  border-inline-start: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .local-library-branch .compact-search {
@@ -4631,25 +4657,290 @@ input[type="range"]:hover::-webkit-slider-thumb {
   .sidebar-pinned .browse-scope > span { flex-basis: 100%; }
 }
 
-.favorite-library-section { margin-block-end: 10px; padding-block-end: 8px; border-block-end: 1px solid var(--bg-3); }
-.favorite-library-heading { display: flex; align-items: center; gap: 2px; }
-.favorite-library-heading .favorite-library-row { flex: 1; }
+.library-panel .panel-heading {
+  padding: 10px 10px 8px 12px;
+  border-block-end: 1px solid var(--bg-3);
+  margin-block-end: 6px;
+}
+.library-panel .panel-heading strong {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text-1);
+}
+.library-panel .panel-heading .eyebrow {
+  font-size: 9.5px;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.favorite-library-section {
+  margin-block-end: 8px;
+  padding-block-end: 8px;
+  border-block-end: 1px solid var(--bg-3);
+}
+.favorite-library-heading {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.favorite-library-heading .favorite-library-row {
+  flex: 1;
+}
 .local-library-branch { margin-inline-start: 0; padding-inline-start: 0; border-inline-start: 0; }
 .library-tree-row {
   min-height: 29px; height: 29px; margin: 0;
-  padding: 0 5px; border: 0; border-block-end: 1px solid var(--bg-2); border-radius: 0;
+  padding: 0 5px; border: 0; border-block-end: 1px solid rgba(255, 255, 255, 0.03); border-radius: 0;
+  transition: background var(--t-fast) ease;
+}
+.library-tree-row:hover:not(.is-branch-open):not(.is-selected):not(.has-color-label) {
+  background: rgba(255, 255, 255, 0.035);
 }
 .library-tree-row.is-branch-open:not(.has-color-label) { background: var(--bg-2); }
 .library-tree-row.is-selected:not(.has-color-label) { background: var(--accent-soft); box-shadow: inset 2px 0 var(--accent); }
-.library-tree-row.is-root .library-copy strong { font-weight: 650; }
+.library-tree-row.is-root .library-copy strong { font-weight: 650; color: var(--text-1); }
 .library-tree-row .library-tree-select { min-height: 28px; }
 .library-tree-row .library-icon { width: 18px; height: 18px; }
-.library-tree-row .count-badge { min-width: 14px; padding-inline: 3px; border: 0; background: transparent; color: var(--text-muted); }
-.favorite-library-row { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; padding: 6px 5px; border: 0; border-radius: var(--r-s); color: var(--text-2); background: transparent; font: inherit; cursor: pointer; }
-.favorite-library-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: start; }
-.favorite-library-row small { font-variant-numeric: tabular-nums; color: var(--text-muted); }
-.favorite-library-row:hover { background: var(--bg-3); }
-.favorite-library-row.is-selected { background: var(--accent-soft); color: var(--text-1); box-shadow: inset 2px 0 var(--accent); }
+.library-tree-row .count-badge {
+  min-width: 14px;
+  padding-inline: 3px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 8.5px;
+  transition: color var(--t-fast) ease;
+}
+.library-tree-row:hover .count-badge,
+.library-tree-row.is-selected .count-badge {
+  color: var(--text-2);
+}
+/* Depth: git-graph style lines. --depth is set per branch in LibraryTreeRow.
+   --tree-indent is dynamically computed by LibrarySidebar (10px down to 4px) based on available width and deepest active nesting level. */
+.library-tree-branch { --tree-line: #2a4f7c; --tree-node: #3b72b0; position: relative; }
+.library-tree-row {
+  /* Dynamically adjust icon size and spacing based on available space and nesting depth */
+  --row-icon-size: clamp(10px, calc(var(--tree-icon-size, 13px) - var(--depth, 0) * 0.5px), 14px);
+  --row-icon-col: calc(var(--row-icon-size) + 2px);
+  --row-icon-gap: clamp(2px, calc(4px - var(--depth, 0) * 0.3px), 5px);
+  padding-inline-start: calc(5px + var(--depth, 0) * var(--tree-indent, 10px));
+}
+.library-tree-row.is-root {
+  --row-icon-size: 14px;
+  --row-icon-col: 16px;
+  --row-icon-gap: 5px;
+}
+.library-tree-row .library-tree-select {
+  grid-template-columns: var(--row-icon-col) minmax(0, 1fr) auto;
+  gap: var(--row-icon-gap);
+  padding-inline-start: 0;
+}
+.library-tree-row .library-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--row-icon-col);
+  height: 18px;
+  color: var(--text-2);
+  background: transparent;
+  flex-shrink: 0;
+}
+.library-tree-row .library-icon .icon-svg {
+  display: block;
+  width: var(--row-icon-size);
+  height: var(--row-icon-size);
+  transition: width var(--t-fast) ease, height var(--t-fast) ease;
+}
+.library-tree-row:hover:not(.has-color-label) .library-icon,
+.library-tree-row.is-selected:not(.has-color-label) .library-icon {
+  color: var(--text-1);
+}
+/* Trunk: continues past every child except the last, linking siblings like a branch line.
+   Alings under parent's chevron center at (depth - 1) * indent + 13px. */
+.library-tree-children > .library-tree-branch:not(:last-child)::before {
+  content: ""; position: absolute; inset-block: 0;
+  inset-inline-start: calc((var(--depth, 1) - 1) * var(--tree-indent, 10px) + 13px);
+  width: 1px; background: var(--tree-line); pointer-events: none; z-index: calc(41 - var(--depth) * 2);
+}
+/* Elbow: rounded curve from the trunk into each child row. */
+.library-tree-row:not(.is-root)::after {
+  content: ""; position: absolute; top: 0; height: 50%;
+  inset-inline-start: calc((var(--depth, 1) - 1) * var(--tree-indent, 10px) + 13px);
+  width: calc(max(3px, var(--tree-indent, 10px) - 5px));
+  border-inline-start: 1px solid var(--tree-line); border-block-end: 1px solid var(--tree-line);
+  border-end-start-radius: 4px; pointer-events: none;
+}
+.library-tree-row.is-leaf:not(.is-root)::after {
+  width: calc(max(5px, var(--tree-indent, 10px) - 1px));
+}
+/* Stub: drops from an open folder's chevron down to its first child. */
+.library-tree-row.is-branch-open::before {
+  content: ""; position: absolute; top: calc(50% + 7px); bottom: -1px;
+  inset-inline-start: calc(var(--depth, 0) * var(--tree-indent, 10px) + 13px);
+  width: 1px; background: var(--tree-line); pointer-events: none;
+}
+/* Commit dot: leaf folders show a node where the chevron would be. */
+.library-tree-row.is-leaf:not(.is-root) .tree-expander { opacity: 1; }
+.library-tree-row.is-leaf:not(.is-root) .tree-expander .icon-svg { display: none; }
+.library-tree-row.is-leaf:not(.is-root) .tree-expander::after { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--tree-node); }
+.tree-chain-sep { margin-inline: 2px; color: var(--text-muted); font-weight: 400; }
+/* Sticky parents: open folders pin under their ancestors while their children scroll. Backgrounds must be opaque.
+   z-index is 40 - 2*depth so trunks (41 - 2*depth) draw over sibling headers but under ancestor headers. */
+.library-tree-row.is-branch-open {
+  position: sticky; top: calc(var(--depth, 0) * 29px); z-index: calc(40 - var(--depth, 0) * 2);
+  background-color: var(--bg-2);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.library-tree-row.is-branch-open.is-selected:not(.has-color-label) { background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg-2); }
+.library-tree-row.is-branch-open.has-color-label,
+.library-tree-row.is-branch-open.has-color-label:hover,
+.library-tree-row.is-branch-open.has-color-label.is-selected { background: linear-gradient(90deg, var(--label-soft), var(--bg-2) 76%), var(--bg-2); }
+.favorite-library-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-s);
+  color: var(--text-2);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  transition: all var(--t-fast) ease;
+}
+.favorite-library-row span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+  font-size: 11px;
+}
+.favorite-library-row small {
+  font-size: 8.5px;
+  padding: 1px 5px;
+  border-radius: var(--r-pill);
+  background: var(--bg-3);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  transition: color var(--t-fast) ease;
+}
+.favorite-library-row .icon-svg {
+  color: #ff6b8b;
+  transition: transform var(--t-fast) ease;
+}
+.favorite-library-row:hover {
+  background: var(--bg-2);
+  color: var(--text-1);
+}
+.favorite-library-row:hover .icon-svg {
+  transform: scale(1.12);
+}
+.favorite-library-row.is-selected {
+  background: var(--accent-soft);
+  color: var(--text-1);
+  border-color: rgba(10, 111, 216, 0.28);
+  box-shadow: inset 2px 0 var(--accent);
+}
+.favorite-library-row.is-selected small {
+  color: var(--text-2);
+}
+
+.local-library-branch .compact-search {
+  height: 28px;
+  margin: 5px 4px 6px 0;
+  padding-inline: 7px 4px;
+  border-radius: 5px;
+  background: var(--bg-1);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all var(--t-fast) ease;
+}
+.local-library-branch .compact-search:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: var(--bg-2);
+}
+.local-library-branch .compact-search:focus-within {
+  border-color: var(--accent);
+  background: var(--bg-2);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.local-library-branch .compact-search input {
+  font-size: 10.5px;
+  padding-inline: 5px 2px;
+}
+.local-library-branch .compact-search .icon-svg {
+  color: var(--text-muted);
+  transition: color var(--t-fast) ease;
+}
+.local-library-branch .compact-search:focus-within .icon-svg {
+  color: var(--accent-strong);
+}
+
+.library-item--all {
+  min-height: 32px;
+  height: 32px;
+  margin: 2px 4px 6px 0;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: transparent;
+  border: 1px solid transparent;
+  transition: all var(--t-fast) ease;
+}
+.library-item--all:hover {
+  background: var(--bg-2);
+}
+.library-item--all.is-selected {
+  background: var(--accent-soft);
+  border-color: rgba(10, 111, 216, 0.3);
+  box-shadow: inset 2px 0 var(--accent);
+}
+.library-item--all .library-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: rgba(10, 111, 216, 0.12);
+  color: var(--accent-strong);
+}
+.library-item--all .library-copy strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+.library-item--all .count-badge {
+  font-size: 8.5px;
+  padding: 1px 5px;
+  border-radius: var(--r-pill);
+  background: var(--bg-3);
+  border: 0;
+  color: var(--text-muted);
+}
+
+.library-tree-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 8px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.library-tree-empty button {
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--bg-3);
+  color: var(--text-2);
+  border: 1px solid var(--bg-4);
+  font-size: 9.5px;
+  cursor: pointer;
+  transition: all var(--t-fast) ease;
+}
+.library-tree-empty button:hover {
+  background: var(--bg-4);
+  color: var(--text-1);
+}
 .favorite-sheet { width: min(448px, calc(100% - 16px)); height: auto; max-height: calc(100% - 20px); }
 .favorite-sheet .sheet-heading { display: flex; align-items: center; justify-content: space-between; min-height: 54px; padding: 10px 14px 10px 16px; border-block-end: 1px solid var(--bg-3); }
 .favorite-heading-copy { display: grid; gap: 2px; min-width: 0; }

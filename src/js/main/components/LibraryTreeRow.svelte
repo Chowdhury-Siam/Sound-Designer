@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { LibraryTreeNode } from "../types";
-  import { treeMatchesQuery } from "../ui-utils";
+  import { compactChain, treeMatchesQuery } from "../ui-utils";
   import Icon from "./Icon.svelte";
   import ItemContextMenu from "./ItemContextMenu.svelte";
   import LibraryTreeRow from "./LibraryTreeRow.svelte";
@@ -31,9 +31,13 @@
     onEdit?: () => void;
   } = $props();
 
-  let visibleChildren = $derived(node.children.filter((child) => treeMatchesQuery(child, filterQuery)));
+  // Compact folders: merge single-child chains into one row, e.g. "Botanica / V4 / Botanica v4".
+  let chain = $derived(compactChain(node, filterQuery));
+  let tail = $derived(chain[chain.length - 1]);
+  let chainLabel = $derived(chain.map((part) => part.name).join(" / "));
+  let visibleChildren = $derived(tail.children.filter((child) => treeMatchesQuery(child, filterQuery)));
   let hasChildren = $derived(visibleChildren.length > 0);
-  let expanded = $derived(filterQuery.length > 0 || expandedIds.has(node.id));
+  let expanded = $derived(filterQuery.length > 0 || expandedIds.has(tail.id));
   let contextOpen = $state(false);
   let contextX = $state(0);
   let contextY = $state(0);
@@ -47,46 +51,47 @@
   };
 </script>
 
-<div class="library-tree-branch">
+<div class="library-tree-branch" style:--depth={depth}>
   <div
-    class={`library-tree-row ${node.labelColor ? `has-color-label label-${node.labelColor}` : ""}`}
-    class:is-pinned={node.pinned}
-    class:is-selected={selectedId === node.id}
+    class={`library-tree-row ${tail.labelColor ? `has-color-label label-${tail.labelColor}` : ""}`}
+    class:is-pinned={tail.pinned}
+    class:is-selected={chain.some((part) => part.id === selectedId)}
     class:is-root={depth === 0}
     class:is-branch-open={hasChildren && expanded}
+    class:is-leaf={!hasChildren}
     oncontextmenu={openContextMenu}
     role="group"
-    aria-label={node.name}
-    data-library-node={node.id}
+    aria-label={chainLabel}
+    data-library-node={JSON.stringify(chain.map((part) => part.id))}
   >
     <button
-      aria-label={`${expanded ? "Collapse" : "Expand"} ${node.name}`}
+      aria-label={`${expanded ? "Collapse" : "Expand"} ${chainLabel}`}
       aria-expanded={hasChildren ? expanded : undefined}
       class:is-expanded={expanded}
       class="tree-expander"
       disabled={!hasChildren}
-      onclick={() => onToggle(node.id)}
+      onclick={() => onToggle(tail.id)}
       type="button"
     ><Icon name="chevron" size={12} /></button>
-    <button class="library-tree-select tooltip" data-tooltip={`${node.path} · ${node.directFileCount} direct sounds · ${node.totalFileCount} including subfolders${meta ? ` · ${meta}` : ""}`} onclick={() => onSelect(node.id)} type="button">
+    <button class="library-tree-select tooltip" data-tooltip={`${tail.path} · ${tail.directFileCount} direct sounds · ${tail.totalFileCount} including subfolders${meta ? ` · ${meta}` : ""}`} onclick={() => onSelect(tail.id)} type="button">
       <span class="library-icon"><Icon name="folder" size={14} /></span>
       <span class="library-copy">
-        <strong>{node.name}</strong>
+        <strong>{#each chain as part, index (part.id)}{#if index}<span class="tree-chain-sep">/</span>{/if}{part.name}{/each}</strong>
       </span>
-      <span class="count-badge" aria-label={`${node.totalFileCount} sounds including subfolders`}>{node.totalFileCount}</span>
+      <span class="count-badge" aria-label={`${tail.totalFileCount} sounds including subfolders`}>{tail.totalFileCount}</span>
     </button>
   </div>
   <ItemContextMenu
     open={contextOpen}
     x={contextX}
     y={contextY}
-    color={node.labelColor}
-    pinned={node.pinned}
+    color={tail.labelColor}
+    pinned={tail.pinned}
     canPin
     canEdit={Boolean(onEdit)}
-    itemName={node.name}
-    onColor={(color) => onLabelColor(node, color)}
-    onTogglePinned={() => onTogglePinned(node)}
+    itemName={tail.name}
+    onColor={(color) => onLabelColor(tail, color)}
+    onTogglePinned={() => onTogglePinned(tail)}
     {onEdit}
     onClose={() => contextOpen = false}
   />

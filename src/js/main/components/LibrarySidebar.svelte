@@ -4,7 +4,7 @@
   import type { UpdateState } from "../updater";
   import type { LibraryFolder, ScanProgress, SoundFile } from "../types";
   import { folderNameFromPath } from "../library";
-  import { findTreePath, relativeTime, treeMatchesQuery } from "../ui-utils";
+  import { compactChain, findTreePath, relativeTime, treeMatchesQuery } from "../ui-utils";
   import Icon from "./Icon.svelte";
   import IconButton from "./IconButton.svelte";
   import ItemContextMenu from "./ItemContextMenu.svelte";
@@ -64,6 +64,32 @@
   let progressLocation = $derived(folderNameFromPath(indexProgress.currentPath));
   let visibleFolders = $derived(folders.filter((folder) => treeMatchesQuery(folder.tree, normalizedQuery)));
   let activeSourceCount = $derived(Number(localSourceEnabled) + Number(cloudLibraryEnabled) + Number(freesoundLibraryEnabled && freesoundSourceEnabled));
+  // Adaptive indent: squeeze the per-level indent (10px → 4px) only when the deepest open level would leave names too little room.
+  const maxVisibleDepth = (nodes: LibraryFolder["tree"][], depth: number): number => {
+    let max = -1;
+    for (const node of nodes) {
+      const tail = compactChain(node, normalizedQuery).at(-1)!;
+      max = Math.max(max, depth);
+      if (normalizedQuery || expandedIds.has(tail.id)) {
+        max = Math.max(max, maxVisibleDepth(tail.children.filter(child => treeMatchesQuery(child, normalizedQuery)), depth + 1));
+      }
+    }
+    return max;
+  };
+  let branchWidth = $state(0);
+  let deepestLevel = $derived(maxVisibleDepth(visibleFolders.map(folder => folder.tree), 0));
+  let treeIndent = $derived.by(() => {
+    if (deepestLevel <= 0 || !branchWidth) return 10;
+    const rowChrome = 67; // padding, expander, folder icon, count badge, gaps
+    const minNameWidth = 100;
+    return Math.max(4, Math.min(10, Math.floor((branchWidth - rowChrome - minNameWidth) / deepestLevel)));
+  });
+  let treeIconSize = $derived.by(() => {
+    if (deepestLevel <= 0 || !branchWidth || treeIndent >= 9) return 14;
+    if (treeIndent >= 7) return 13;
+    if (treeIndent >= 5) return 12;
+    return 11;
+  });
   const collectPinned = (foldersToSearch: LibraryFolder[]) => {
     const pinned: LibraryFolder["tree"][] = [];
     for (const folder of foldersToSearch) {
@@ -133,10 +159,11 @@
     await tick();
     if (generation !== revealGeneration || !sidebarElement?.isConnected) return;
     const row = Array.from(sidebarElement.querySelectorAll<HTMLElement>("[data-library-node]"))
-      .find(element => element.dataset.libraryNode === nodeId);
+      .find(element => (JSON.parse(element.dataset.libraryNode || "[]") as string[]).includes(nodeId));
     const list = sidebarElement.querySelector<HTMLElement>(".library-list");
     if (!row || !list) return;
-    list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top - 12;
+    const stickyOffset = (Number(getComputedStyle(row).getPropertyValue("--depth")) || 0) * 29;
+    list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top - 12 - stickyOffset;
     row.querySelector<HTMLButtonElement>(".library-tree-select")?.focus({ preventScroll: true });
   };
 </script>
@@ -175,16 +202,16 @@
         <span class="library-copy"><strong>Local</strong><small>{sounds.length.toLocaleString()} indexed sounds</small></span>
       </label>
       {#if localSourceEnabled}
-        <div class="local-library-branch">
+        <div class="local-library-branch" bind:clientWidth={branchWidth} style:--tree-indent={`${treeIndent}px`} style:--tree-icon-size={`${treeIconSize}px`}>
           {#if folders.length}
             <label class="compact-search">
-              <Icon name="search" />
+              <Icon name="search" size={13} />
               <input aria-label="Search library folders" autocomplete="off" name="library-folder-search" oninput={(event) => onQueryChange(event.currentTarget.value)} placeholder="Filter local folders…" spellcheck="false" value={query} />
               {#if query}<IconButton icon="close" label="Clear library filter" onclick={() => onQueryChange("")} />{/if}
             </label>
           {/if}
           <button class:is-selected={selectedFolder === "all" && favoriteSelected === null} class="library-item library-item--all" onclick={() => onSelectFolder("all")} type="button">
-            <span class="library-icon"><Icon name="library" /></span>
+            <span class="library-icon"><Icon name="library" size={14} /></span>
             <span class="library-copy"><strong>All local sounds</strong><small>Every indexed folder</small></span>
             <span class="count-badge">{sounds.length}</span>
           </button>
@@ -200,6 +227,12 @@
                   </button>
                 </div>
               {/each}
+            </div>
+          {/if}
+          {#if normalizedQuery && visibleFolders.length === 0}
+            <div class="library-tree-empty">
+              <span>No folders match "{query}"</span>
+              <button onclick={() => onQueryChange("")} type="button">Clear filter</button>
             </div>
           {/if}
           {#each visibleFolders as folder (folder.id)}

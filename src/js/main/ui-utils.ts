@@ -60,3 +60,16 @@ export const countTreeNodes = (node: LibraryTreeNode): number =>
 
 export const treeMatchesQuery = (node: LibraryTreeNode, query: string): boolean =>
   !query || node.name.toLowerCase().includes(query) || node.children.some((child) => treeMatchesQuery(child, query));
+
+/** Folders merged into one row: follows single visible children while a folder has no sounds of its own. Labelled or pinned folders stay separate. */
+export const compactChain = (node: LibraryTreeNode, query: string): LibraryTreeNode[] => {
+  const nodes = [node];
+  let current = node;
+  while (current.directFileCount === 0 && !current.labelColor && !current.pinned) {
+    const children = current.children.filter((child) => treeMatchesQuery(child, query));
+    if (children.length !== 1) break;
+    current = children[0];
+    nodes.push(current);
+  }
+  return nodes;
+};
