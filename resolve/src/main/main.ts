@@ -2,7 +2,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { open, readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { app, BrowserWindow, dialog, nativeImage, protocol } from "electron";
+import { app, BrowserWindow, dialog, Menu, nativeImage, protocol } from "electron";
 import { PLUGIN_ID } from "../shared/types";
 import { registerIpcHandlers } from "./ipc/register";
 import { NativeResolveHost, ResolveHostError, type WorkflowIntegrationModule } from "./services/resolveHost";
@@ -244,6 +244,26 @@ app.whenReady().then(async () => {
   if (!await initializeStorage()) {
     app.quit();
     return;
+  }
+  // Keep existing Chromium state and legacy storage paths when branding the hosted runtime.
+  const userDataPath = app.getPath("userData");
+  app.setName("SoundDesigner");
+  app.setPath("userData", userDataPath);
+  if (process.platform === "darwin") {
+    app.dock?.setIcon(WINDOW_ICON);
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      { label: "SoundDesigner", submenu: [
+        { role: "about", label: "About SoundDesigner" },
+        { type: "separator" },
+        { role: "hide", label: "Hide SoundDesigner" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit", label: "Quit SoundDesigner" },
+      ] },
+      { role: "editMenu" },
+      { role: "windowMenu" },
+    ]));
   }
   registerUiProtocol();
   registerIpcHandlers(getHost, getLibrary, getStorage);

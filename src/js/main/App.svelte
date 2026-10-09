@@ -1877,10 +1877,15 @@ import { isCloudSound } from "./cloudLibrary";
     const hydrated = hydrateLibraryMetadata(snapshot.folders, snapshot.sounds);
     folders = hydrated.folders;
     sounds = hydrated.sounds;
-    if (selectedId && !sounds.some((sound) => sound.id === selectedId)) selectedId = "";
-    if (!folders.length) {
-      tabs = createLibraryTabs();
-      activeTabId = "search-library";
+    if (selectedId && !sounds.some((sound) => sound.id === selectedId)
+      && !freesoundSounds.some((sound) => sound.id === selectedId)
+      && !savedCloudFavorites.some((sound) => sound.id === selectedId)) selectedId = "";
+    if (!folders.length && tabs.some((tab) => tab.folderId !== "all")) {
+      tabs = tabs.map((tab) => {
+        if (tab.folderId === "all") return tab;
+        const resetTab = { ...tab, folderId: "all" };
+        return { ...resetTab, label: searchTabLabel(resetTab, folderNameForId) };
+      });
     }
   };
 

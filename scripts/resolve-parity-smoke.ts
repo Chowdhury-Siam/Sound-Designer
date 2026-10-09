@@ -3,6 +3,7 @@ import { mock } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { registerPlatform } from "../src/js/platform/client";
 import { createResolvePlatform } from "../resolve/src/renderer/bridge";
+import { searchTabLabel } from "../src/js/main/searchTabs";
 
 // Exercise the authoritative feature modules with the same sandbox boundary as Resolve.
 mock.module("../src/js/lib/utils/bolt", () => ({ csi: { getSystemPath: () => "" } }));
@@ -106,6 +107,63 @@ assert.equal((await createResolvePlatform().handoff.insertAudio({ path: fx.sound
 await prepareAudioSegmentForHost(local, { start: 0, end: 0.05 }, { ...options, processing: reactiveFx });
 // Run the actual native-drag branch from the shared App with a synthetic drag event.
 const app = await readFile(new URL("../src/js/main/App.svelte", import.meta.url), "utf8");
+const snapshotFunction = app.match(/const applyNativeLibrarySnapshot = [\s\S]*?\n  \};/)?.[0];
+assert.ok(snapshotFunction);
+const snapshotCode = new Bun.Transpiler({ loader: "ts", target: "browser" }).transformSync(snapshotFunction);
+const searchTabs = [{ id: "search-library", label: "whoosh", query: "whoosh", folderId: "all" }, { id: "search-2", label: "hit", query: "hit", folderId: "all" }];
+const runSnapshot = new Function("selection", "freesoundSounds", "savedCloudFavorites", "snapshot", "initialTabs", "searchTabLabel", `
+  let selectedId = selection, folders = [], sounds = [];
+  let tabs = initialTabs, activeTabId = "search-library";
+  const hydrateLibraryMetadata = (folders, sounds) => ({ folders, sounds });
+  const folderNameForId = () => "";
+  ${snapshotCode}
+  applyNativeLibrarySnapshot(snapshot);
+  applyNativeLibrarySnapshot(snapshot);
+  return { tabs, activeTabId, selectedId, sounds };
+`);
+const refreshSnapshot = (selection: string, cloud: unknown[], favorites: unknown[], snapshot: unknown, tabs: unknown[]) => runSnapshot(selection, cloud, favorites, snapshot, tabs, searchTabLabel);
+for (const [liveCloud, favorites] of [[[cloud[0]], []], [[], [cloud[0]]]]) {
+  const refreshed = refreshSnapshot(cloud[0].id, liveCloud, favorites, { folders: [], sounds: [] }, searchTabs);
+  assert.equal(refreshed.tabs, searchTabs, "Focus/visibility refresh must preserve every search tab even without local folders");
+  assert.equal(refreshed.activeTabId, "search-library");
+  assert.equal(refreshed.selectedId, cloud[0].id, "Native library refresh must retain the selected cloud sound");
+}
+assert.equal(refreshSnapshot(local.id, [], [], { folders: [], sounds: [] }, searchTabs).selectedId, "", "Deleted local sounds must still lose selection");
+assert.equal(refreshSnapshot(local.id, [], [], { folders: [], sounds: [local] }, searchTabs).selectedId, local.id);
+const scopedTabs = [{ ...searchTabs[0], folderId: "removed-folder" }, searchTabs[1]];
+const afterRemoval = refreshSnapshot("", [], [], { folders: [], sounds: [] }, scopedTabs);
+assert.equal(afterRemoval.tabs[0].folderId, "all", "Removing the last local folder must leave a usable search scope");
+assert.equal(afterRemoval.tabs[0].query, "whoosh", "Scope fallback must not erase the search");
+assert.equal(afterRemoval.tabs[1], scopedTabs[1], "Unaffected cloud tabs must retain identity");
+
+const nativeMain = await readFile(new URL("../resolve/src/main/main.ts", import.meta.url), "utf8");
+const brandingStart = nativeMain.indexOf('  const userDataPath = app.getPath("userData");');
+assert.ok(brandingStart >= 0);
+const brandingCode = nativeMain.slice(brandingStart, nativeMain.indexOf("\n  registerUiProtocol();", brandingStart));
+for (const platform of ["darwin", "win32"]) {
+  let userDataPath = "/existing/Electron";
+  let appName = "Electron";
+  let dockIcon: unknown;
+  let menu: any;
+  const windowIcon = {};
+  new Function("app", "Menu", "WINDOW_ICON", "process", brandingCode)({
+    getPath: () => userDataPath,
+    setName: (name: string) => { appName = name; userDataPath = "/new/SoundDesigner"; },
+    setPath: (name: string, value: string) => { assert.equal(name, "userData"); userDataPath = value; },
+    dock: platform === "darwin" ? { setIcon: (icon: unknown) => { dockIcon = icon; } } : undefined,
+  }, { buildFromTemplate: (template: unknown) => template, setApplicationMenu: (value: unknown) => { menu = value; } }, windowIcon, { platform });
+  assert.equal(appName, "SoundDesigner");
+  assert.equal(userDataPath, "/existing/Electron", "Branding must not move existing Chromium state or legacy storage");
+  if (platform === "darwin") {
+    assert.equal(dockIcon, windowIcon);
+    assert.equal(menu[0].label, "SoundDesigner");
+    assert.ok(menu[0].submenu.some((item: any) => item.role === "quit"));
+    assert.ok(menu.some((item: any) => item.role === "editMenu"), "Native copy/paste shortcuts must remain available");
+  } else {
+    assert.equal(dockIcon, undefined);
+    assert.equal(menu, undefined);
+  }
+}
 const dragBranch = app.match(/if \(host === "resolve"\) \{\s*event\.preventDefault\(\);[\s\S]*?\n      return;\n    \}/)?.[0];
 assert.ok(dragBranch, "Shared drag handler must cancel Chromium drag before Electron startDrag");
 let cancelled = false;
