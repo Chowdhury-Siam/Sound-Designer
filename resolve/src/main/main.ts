@@ -251,7 +251,7 @@ app.whenReady().then(async () => {
   app.setPath("userData", userDataPath);
   if (process.platform === "darwin") {
     app.dock?.setIcon(WINDOW_ICON);
-    // macOS takes the first menu title from Resolve's Electron bundle, ignoring this label.
+    // Electron's label alone cannot override the native application-menu title.
     Menu.setApplicationMenu(Menu.buildFromTemplate([
       { label: "SoundDesigner", submenu: [
         { role: "about", label: "About SoundDesigner" },
@@ -265,6 +265,12 @@ app.whenReady().then(async () => {
       { role: "editMenu" },
       { role: "windowMenu" },
     ]));
+    try {
+      const requireNative = createRequire(path.join(getPluginRoot(), "package.json"));
+      requireNative(path.join(getPluginRoot(), "macos-menu.node"));
+    } catch (error) {
+      console.error("SoundDesigner native menu branding failed", error);
+    }
   }
   registerUiProtocol();
   registerIpcHandlers(getHost, getLibrary, getStorage);

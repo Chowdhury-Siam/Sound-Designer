@@ -155,6 +155,7 @@ assert.equal(context.checkChoices(), false);
 for (const arch of ["arm64", "x86_64"]) for (const phase of ["preinstall", "postinstall"]) {
   const install = componentScript("resolve", phase, arch);
   assert.ok(install.includes(`/usr/bin/lipo "$tree/WorkflowIntegration.node" -verify_arch ${arch}`), "lipo requires its input before the architecture list");
+  assert.ok(install.includes(`/usr/bin/lipo "$tree/macos-menu.node" -verify_arch ${arch}`), "The menu bridge must match the Resolve runtime architecture");
 }
 for (const target of ["adobe", "resolve"]) {
   const install = componentScript(target, "postinstall");

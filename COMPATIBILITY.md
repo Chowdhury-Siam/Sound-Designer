@@ -28,7 +28,7 @@ User-scoped development CEP installs can shadow system installs; remove or reloc
 
 ## Host limitations
 
-- Resolve launches its own Electron application bundle. SoundDesigner sets its window title, rounded window/Dock icon and menu actions, but macOS can retain **Electron** as the first menu title and OS application name. `app.setName()` does not rename that bundle; we do not modify Resolve's runtime or its signing metadata.
+- Resolve launches its own Electron application bundle. On Mac, assembly compiles `macos-menu.node` with Xcode Command Line Tools to set the in-process AppKit menu title to SoundDesigner after Electron installs its menu and on activation. This does not rename or modify Resolve's bundle, signing metadata or Finder identity. Actual Resolve menu rendering still requires a Mac session; `app.setName()` alone is insufficient.
 - Adobe requires a saved project for prepared media and an active composition/timeline for insertion. Browser preview cannot certify host operations.
 - Resolve uses native project IDs; current non-WAV handoff prepares WAV even when shared Adobe conversion settings differ. Selected Fairlight-track placement and Edit fallback need real-host evidence.
 - Native drag can display a path-labelled target preview; no custom target label or Soundly-equivalent latency claim is made. Pending conversion can fall back to insertion; measure actual behavior per host.

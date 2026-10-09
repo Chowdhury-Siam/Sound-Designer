@@ -22,7 +22,7 @@ test("artifact audit rejects contaminated payloads, wrong identities and platfor
     await writeFile(path.join(directory, "mimetype"), "unexpected-package");
     await expect(auditPayload(directory, "adobe")).rejects.toThrow("mimetype");
     await rm(path.join(directory, "mimetype"));
-    for (const file of ["leak.map", "credentials.json", ".env.production", "cache", ".tmp-leftover", ".pw-local", "fixture.wav", "fixture.log", "test.tmp", "App.svelte", "preload.cjs", "WorkflowIntegration.node", "hidden.zip"]) {
+    for (const file of ["leak.map", "credentials.json", ".env.production", "cache", ".tmp-leftover", ".pw-local", "fixture.wav", "fixture.log", "test.tmp", "App.svelte", "preload.cjs", "WorkflowIntegration.node", "macos-menu.node", "hidden.zip"]) {
       await writeFile(path.join(directory, file), "unsafe");
       await expect(auditPayload(directory, "adobe")).rejects.toThrow();
       await rm(path.join(directory, file));
@@ -53,6 +53,26 @@ test("artifact audit rejects contaminated payloads, wrong identities and platfor
     await writeFile(path.join(directory, "WorkflowIntegration.node"), Buffer.alloc(128));
     await expect(auditPayload(directory, "resolve", "win32", "x64")).rejects.toThrow("Windows PE");
     await rm(path.join(directory, "WorkflowIntegration.node"));
+    const machO = Buffer.alloc(32);
+    machO.writeUInt32LE(0xfeedfacf, 0);
+    machO.writeUInt32LE(0x0100000c, 4);
+    await writeFile(path.join(directory, "WorkflowIntegration.node"), machO);
+    await expect(auditPayload(directory, "resolve", "darwin", "arm64")).rejects.toThrow("missing macos-menu.node");
+    await writeFile(path.join(directory, "macos-menu.node"), Buffer.alloc(32));
+    await expect(auditPayload(directory, "resolve", "darwin", "arm64")).rejects.toThrow("Mach-O");
+    const intelMachO = Buffer.from(machO);
+    intelMachO.writeUInt32LE(0x01000007, 4);
+    await writeFile(path.join(directory, "macos-menu.node"), intelMachO);
+    await expect(auditPayload(directory, "resolve", "darwin", "arm64")).rejects.toThrow("not target arm64");
+    await writeFile(path.join(directory, "macos-menu.node"), machO);
+    expect(Object.keys(await auditPayload(directory, "resolve", "darwin", "arm64"))).toHaveLength(9);
+    await expect(auditPayload(directory, "resolve", "darwin", "x64")).rejects.toThrow();
+    await writeFile(path.join(directory, "unapproved.node"), machO);
+    await expect(auditPayload(directory, "resolve", "darwin", "arm64")).rejects.toThrow("Unexpected");
+    await rm(path.join(directory, "unapproved.node"));
+    await rm(path.join(directory, "WorkflowIntegration.node"));
+    await expect(auditPayload(directory, "resolve", "linux", "x64", true)).rejects.toThrow("non-Mac");
+    await rm(path.join(directory, "macos-menu.node"));
     await writeFile(path.join(directory, "ui/assets/duplicate.css"), "body{}");
     await expect(auditPayload(directory, "resolve", "linux", "x64", true)).rejects.toThrow("exactly one");
     await rm(path.join(directory, "ui/assets/duplicate.css"));

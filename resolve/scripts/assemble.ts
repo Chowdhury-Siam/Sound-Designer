@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { PLUGIN_ID, PLUGIN_VERSION } from "../src/shared/types";
 import { validateNativeModule } from "./native-module";
 
@@ -36,6 +37,14 @@ await mkdir(pluginRoot, { recursive: true });
 await cp(path.join(nativeRoot, "main.cjs"), path.join(pluginRoot, "main.cjs"));
 await cp(path.join(nativeRoot, "preload.cjs"), path.join(pluginRoot, "preload.cjs"));
 await cp(rendererRoot, path.join(pluginRoot, "ui"), { recursive: true });
+if (process.platform === "darwin") {
+  const architecture = process.env.RESOLVE_TARGET_ARCH || process.arch;
+  const module = path.join(pluginRoot, "macos-menu.node");
+  const source = path.join(root, "src", "main", "native", "macos-menu.mm");
+  const result = spawnSync("/usr/bin/xcrun", ["clang++", "-bundle", "-fobjc-arc", "-framework", "AppKit", "-arch", architecture === "x64" ? "x86_64" : architecture, "-mmacosx-version-min=11.0", source, "-o", module], { stdio: "inherit" });
+  if (result.status !== 0) throw new Error("Could not build the macOS menu-title bridge. Install Xcode Command Line Tools and rebuild.");
+  validateNativeModule(await readFile(module), "darwin", architecture);
+}
 
 const manifestSource = await readFile(path.join(root, "src", "manifest.xml"), "utf8");
 if (!manifestSource.includes(`<Version>${PLUGIN_VERSION}</Version>`)) {
