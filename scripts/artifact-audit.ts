@@ -65,7 +65,9 @@ export const auditPayload = async (directory: string, host: Host, platform: stri
     else if (!allowMissingNative) throw new Error("Resolve payload is missing WorkflowIntegration.node");
     if (files.includes("macos-menu.node")) {
       if (platform !== "darwin") throw new Error("macOS menu bridge must not be included in non-Mac payloads");
-      validateNativeModule(await readFile(path.join(directory, "macos-menu.node")), platform, arch);
+      const bytes = await readFile(path.join(directory, "macos-menu.node"));
+      const architectures = validateNativeModule(bytes, platform, arch);
+      if (!architectures.includes("x64") || !architectures.includes("arm64")) throw new Error("macos-menu.node must support both Intel and Apple Silicon Resolve runtimes");
     } else if (platform === "darwin" && !allowMissingNative) throw new Error("Resolve payload is missing macos-menu.node");
     if (files.filter(file => /^ui\/assets\/.*\.css$/.test(file)).length !== 1 || files.filter(file => /^ui\/assets\/.*\.js$/.test(file)).length !== 1) throw new Error("Resolve must contain exactly one shared UI script and stylesheet");
   }

@@ -38,12 +38,13 @@ await cp(path.join(nativeRoot, "main.cjs"), path.join(pluginRoot, "main.cjs"));
 await cp(path.join(nativeRoot, "preload.cjs"), path.join(pluginRoot, "preload.cjs"));
 await cp(rendererRoot, path.join(pluginRoot, "ui"), { recursive: true });
 if (process.platform === "darwin") {
-  const architecture = process.env.RESOLVE_TARGET_ARCH || process.arch;
   const module = path.join(pluginRoot, "macos-menu.node");
   const source = path.join(root, "src", "main", "native", "macos-menu.mm");
-  const result = spawnSync("/usr/bin/xcrun", ["clang++", "-bundle", "-fobjc-arc", "-framework", "AppKit", "-arch", architecture === "x64" ? "x86_64" : architecture, "-mmacosx-version-min=11.0", source, "-o", module], { stdio: "inherit" });
+  // Resolve's Electron may run under Rosetta even when the builder is native ARM.
+  const result = spawnSync("/usr/bin/xcrun", ["clang++", "-bundle", "-fobjc-arc", "-framework", "AppKit", "-arch", "x86_64", "-arch", "arm64", "-mmacosx-version-min=11.0", source, "-o", module], { stdio: "inherit" });
   if (result.status !== 0) throw new Error("Could not build the macOS menu-title bridge. Install Xcode Command Line Tools and rebuild.");
-  validateNativeModule(await readFile(module), "darwin", architecture);
+  const bytes = await readFile(module);
+  for (const architecture of ["x64", "arm64"]) validateNativeModule(bytes, "darwin", architecture);
 }
 
 const manifestSource = await readFile(path.join(root, "src", "manifest.xml"), "utf8");

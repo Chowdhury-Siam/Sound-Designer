@@ -35,7 +35,8 @@ if (process.platform === "darwin") {
     const compile = ["clang++", "-fobjc-arc", "-framework", "AppKit", "-mmacosx-version-min=11.0", menuSource];
     run("/usr/bin/xcrun", [...compile, "-DSOUNDDESIGNER_MENU_TEST", "-o", menuTest]);
     run(menuTest, []);
-    run("/usr/bin/xcrun", [...compile, "-bundle", "-o", menuModule]);
+    run("/usr/bin/xcrun", [...compile, "-bundle", "-arch", "x86_64", "-arch", "arm64", "-o", menuModule]);
+    run("/usr/bin/lipo", [menuModule, "-verify_arch", "x86_64", "arm64"]);
     run(process.execPath, ["-e", "require(process.argv[1]); console.log('Node-API menu bridge loaded successfully');", menuModule]);
     const resources = path.join(scratch, "resources");
     await writeMacInstallerResources(resources, path.join(scratch, "source"));

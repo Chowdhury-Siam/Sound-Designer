@@ -140,20 +140,21 @@ const nativeMain = await readFile(new URL("../resolve/src/main/main.ts", import.
 const brandingStart = nativeMain.indexOf('  const userDataPath = app.getPath("userData");');
 assert.ok(brandingStart >= 0);
 const brandingCode = nativeMain.slice(brandingStart, nativeMain.indexOf("\n  registerUiProtocol();", brandingStart));
-for (const platform of ["darwin", "win32"]) for (const loadFails of [false, true]) {
+for (const platform of ["darwin", "win32"]) for (const arch of ["x64", "arm64"]) for (const loadFails of [false, true]) for (const logFails of [false, true]) {
   let userDataPath = "/existing/Electron";
   let appName = "Electron";
   let dockIcon: unknown;
   let menu: any;
   const loads: string[] = [];
   const errors: unknown[][] = [];
+  const diagnostics: string[] = [];
   const windowIcon = {};
-  new Function("app", "Menu", "WINDOW_ICON", "process", "createRequire", "path", "getPluginRoot", "console", brandingCode)({
-    getPath: () => userDataPath,
+  await new Function("app", "Menu", "WINDOW_ICON", "process", "createRequire", "path", "getPluginRoot", "console", "writeFile", `return (async () => { ${brandingCode} })();`)({
+    getPath: (name: string) => name === "appData" ? "/appData" : userDataPath,
     setName: (name: string) => { appName = name; userDataPath = "/new/SoundDesigner"; },
     setPath: (name: string, value: string) => { assert.equal(name, "userData"); userDataPath = value; },
     dock: platform === "darwin" ? { setIcon: (icon: unknown) => { dockIcon = icon; } } : undefined,
-  }, { buildFromTemplate: (template: unknown) => template, setApplicationMenu: (value: unknown) => { menu = value; } }, windowIcon, { platform },
+  }, { buildFromTemplate: (template: unknown) => template, setApplicationMenu: (value: unknown) => { menu = value; } }, windowIcon, { platform, arch },
     (file: string) => {
       assert.equal(file, "/plugin/package.json");
       return (module: string) => {
@@ -161,14 +162,23 @@ for (const platform of ["darwin", "win32"]) for (const loadFails of [false, true
         loads.push(module);
         if (loadFails) throw new Error("Native load fixture");
       };
-    }, { join: (...parts: string[]) => parts.join("/") }, () => "/plugin", { error: (...args: unknown[]) => errors.push(args) });
+    }, { join: (...parts: string[]) => parts.join("/") }, () => "/plugin", { error: (...args: unknown[]) => errors.push(args) },
+    async (file: string, content: string, encoding: string) => {
+      assert.equal(file, "/appData/SoundDesigner/macos-menu.log", "Diagnostics must stay machine-local, not in the installed plugin or media root");
+      assert.equal(encoding, "utf8");
+      diagnostics.push(content);
+      if (logFails) throw new Error("Diagnostic write fixture");
+    });
   assert.equal(appName, "SoundDesigner");
   assert.equal(userDataPath, "/existing/Electron", "Branding must not move existing Chromium state or legacy storage");
   if (platform === "darwin") {
     assert.equal(dockIcon, windowIcon);
     assert.equal(menu[0].label, "SoundDesigner");
     assert.deepEqual(loads, ["/plugin/macos-menu.node"], "Load only the plugin-local Mac bridge");
-    assert.equal(errors.length, loadFails ? 1 : 0, "A failed branding helper must not abort startup");
+    assert.equal(errors.length, Number(loadFails) + Number(logFails), "Helper and diagnostic failures must not abort startup");
+    assert.equal(diagnostics.length, 1);
+    assert.ok(diagnostics[0].includes(`${loadFails ? "failed" : "loaded"} (runtime ${arch})`));
+    if (loadFails) assert.ok(diagnostics[0].includes("Native load fixture"));
     assert.ok(menu[0].submenu.some((item: any) => item.role === "quit"));
     assert.ok(menu.some((item: any) => item.role === "editMenu"), "Native copy/paste shortcuts must remain available");
   } else {
@@ -176,6 +186,7 @@ for (const platform of ["darwin", "win32"]) for (const loadFails of [false, true
     assert.equal(menu, undefined);
     assert.deepEqual(loads, [], "Windows must not load the AppKit bridge");
     assert.deepEqual(errors, []);
+    assert.deepEqual(diagnostics, []);
   }
 }
 const dragBranch = app.match(/if \(host === "resolve"\) \{\s*event\.preventDefault\(\);[\s\S]*?\n      return;\n    \}/)?.[0];

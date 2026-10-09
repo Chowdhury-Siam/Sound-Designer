@@ -1,6 +1,6 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { open, readFile, stat } from "node:fs/promises";
+import { open, readFile, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { app, BrowserWindow, dialog, Menu, nativeImage, protocol } from "electron";
 import { PLUGIN_ID } from "../shared/types";
@@ -265,12 +265,16 @@ app.whenReady().then(async () => {
       { role: "editMenu" },
       { role: "windowMenu" },
     ]));
+    let menuStatus = `loaded (runtime ${process.arch})`;
     try {
       const requireNative = createRequire(path.join(getPluginRoot(), "package.json"));
       requireNative(path.join(getPluginRoot(), "macos-menu.node"));
     } catch (error) {
+      menuStatus = `failed (runtime ${process.arch}): ${error instanceof Error ? error.message : String(error)}`;
       console.error("SoundDesigner native menu branding failed", error);
     }
+    void writeFile(path.join(app.getPath("appData"), "SoundDesigner", "macos-menu.log"), `${new Date().toISOString()} ${menuStatus}\n`, "utf8")
+      .catch(error => console.error("SoundDesigner menu diagnostic write failed", error));
   }
   registerUiProtocol();
   registerIpcHandlers(getHost, getLibrary, getStorage);

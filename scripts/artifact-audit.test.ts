@@ -65,8 +65,16 @@ test("artifact audit rejects contaminated payloads, wrong identities and platfor
     await writeFile(path.join(directory, "macos-menu.node"), intelMachO);
     await expect(auditPayload(directory, "resolve", "darwin", "arm64")).rejects.toThrow("not target arm64");
     await writeFile(path.join(directory, "macos-menu.node"), machO);
-    expect(Object.keys(await auditPayload(directory, "resolve", "darwin", "arm64"))).toHaveLength(9);
+    await expect(auditPayload(directory, "resolve", "darwin", "arm64")).rejects.toThrow("both Intel and Apple Silicon");
     await expect(auditPayload(directory, "resolve", "darwin", "x64")).rejects.toThrow();
+    const universalMachO = Buffer.alloc(48);
+    universalMachO.writeUInt32BE(0xcafebabe, 0);
+    universalMachO.writeUInt32BE(2, 4);
+    universalMachO.writeUInt32BE(0x01000007, 8);
+    universalMachO.writeUInt32BE(0x0100000c, 28);
+    await writeFile(path.join(directory, "WorkflowIntegration.node"), universalMachO);
+    await writeFile(path.join(directory, "macos-menu.node"), universalMachO);
+    for (const architecture of ["x64", "arm64"]) expect(Object.keys(await auditPayload(directory, "resolve", "darwin", architecture))).toHaveLength(9);
     await writeFile(path.join(directory, "unapproved.node"), machO);
     await expect(auditPayload(directory, "resolve", "darwin", "arm64")).rejects.toThrow("Unexpected");
     await rm(path.join(directory, "unapproved.node"));
