@@ -152,6 +152,10 @@ context.choices.resolve.selected = false;
 assert.equal(context.checkChoices(), true);
 context.my.target.mountpoint = "/Volumes/Other";
 assert.equal(context.checkChoices(), false);
+for (const arch of ["arm64", "x86_64"]) for (const phase of ["preinstall", "postinstall"]) {
+  const install = componentScript("resolve", phase, arch);
+  assert.ok(install.includes(`/usr/bin/lipo "$tree/WorkflowIntegration.node" -verify_arch ${arch}`), "lipo requires its input before the architecture list");
+}
 for (const target of ["adobe", "resolve"]) {
   const install = componentScript(target, "postinstall");
   assert.match(install, /trap cleanup EXIT/);

@@ -179,7 +179,7 @@ export const componentScript = (target, phase, runtimeArch = "arm64") => {
   for file in manifest.xml package.json main.cjs preload.cjs ui/index.html WorkflowIntegration.node; do [ -s "$tree/$file" ] || return 1; done
   [ "$(/usr/bin/xmllint --xpath 'string(//Id)' "$tree/manifest.xml")" = 'com.sound.designer.resolve' ] || return 1
   /usr/bin/grep -Eq '"name"[[:space:]]*:[[:space:]]*"com\\.sound\\.designer\\.resolve"' "$tree/package.json" || return 1
-  /usr/bin/lipo -verify_arch ${runtimeArch} "$tree/WorkflowIntegration.node"
+  /usr/bin/lipo "$tree/WorkflowIntegration.node" -verify_arch ${runtimeArch}
 `;
   const hostCheck = target === "adobe"
     ? `/usr/bin/pgrep -f '/Contents/MacOS/(After Effects|Adobe Premiere Pro)' >/dev/null`
