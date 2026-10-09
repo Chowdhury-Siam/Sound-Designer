@@ -156,7 +156,7 @@ for (const platform of ["darwin", "win32"]) {
   assert.equal(userDataPath, "/existing/Electron", "Branding must not move existing Chromium state or legacy storage");
   if (platform === "darwin") {
     assert.equal(dockIcon, windowIcon);
-    assert.equal(menu[0].label, "SoundDesigner");
+    assert.equal(menu[0].label, "SoundDesigner", "Template branding only; macOS owns the first menu title through the runtime bundle");
     assert.ok(menu[0].submenu.some((item: any) => item.role === "quit"));
     assert.ok(menu.some((item: any) => item.role === "editMenu"), "Native copy/paste shortcuts must remain available");
   } else {

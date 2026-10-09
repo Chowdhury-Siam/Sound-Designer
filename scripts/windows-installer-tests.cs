@@ -32,6 +32,18 @@ internal static class InstallerTests
     }
     public static void Main()
     {
+        var mainSource = File.ReadAllText(Path.Combine(Directory.GetCurrentDirectory(), "resolve", "src", "main", "main.ts"));
+        var iconBase64 = System.Text.RegularExpressions.Regex.Match(mainSource, "const WINDOW_ICON = nativeImage.createFromDataURL\\(\"data:image/png;base64,([^\"]+)\"\\)").Groups[1].Value;
+        using (var bytes = new MemoryStream(Convert.FromBase64String(iconBase64)))
+        using (var icon = new System.Drawing.Bitmap(bytes))
+        using (var installerIcon = LogoArt.Create()) {
+            Assert(icon.Width == 256 && icon.Height == 256, "Runtime icon must retain 256px detail");
+            foreach (var image in new[] { icon, installerIcon }) {
+                foreach (var point in new[] { new System.Drawing.Point(0, 0), new System.Drawing.Point(255, 0), new System.Drawing.Point(0, 255), new System.Drawing.Point(255, 255), new System.Drawing.Point(20, 20) })
+                    Assert(image.GetPixel(point.X, point.Y).A == 0, "Dock, taskbar and installer icons must have transparent rounded corners");
+                Assert(image.GetPixel(128, 128).A == 255, "Rounding must preserve the center of the icon");
+            }
+        }
         var root = Path.Combine(Path.GetTempPath(), "sounddesigner-installer-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try {
