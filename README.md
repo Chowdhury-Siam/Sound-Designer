@@ -395,6 +395,7 @@ bun run build
 | `scripts` | Smoke tests, certificate creation, release packaging, and platform installer builders |
 | `cep.config.ts` | CEP hosts, runtime floor, manifest, and build configuration |
 | `.github/workflows/main.yml` | Read-only, unpublished readiness checks and explicitly dispatched native candidate builds |
+| `.github/workflows/release.yml` | Version-bump-triggered installer builds and public releases, with signed Adobe payloads and audited unsigned installers |
 
 ---
 
@@ -429,7 +430,7 @@ bun run test:installers
 
 The EXE must be built on Windows and the PKG on macOS. `installer:macos` runs the complete build chain, including Adobe ZXP signing using your existing publisher certificate and password. It creates an unsigned, unpublished test PKG, not a production-signed/notarized installer. It uses the newly generated ZXP rather than an older `SOUNDDESIGNER_ZXP` override. To assemble prebuilt inputs without signing again, set `SOUNDDESIGNER_INSTALLER_CANDIDATE=1` and run `bun run installer:macos:assemble`. Existing installer outputs are refused; choose a new path with `SOUNDDESIGNER_INSTALLER_OUTPUT`. Current native gates are documented in [compatibility](COMPATIBILITY.md).
 
-The current workflow has read-only repository permission and no signing or publishing job. Normal runs perform shared static checks and unsigned Adobe payload builds. Native candidate dispatch uses the bundled modules under `resolve/vendor/windows` and `resolve/vendor/macos`, plus a separately supplied, already signed ZXP that matches the current build. The native modules must be included in the checkout; no module Base64 secrets are required. See [RELEASING.md](RELEASING.md) for input names, manual certification, signing/notarization gates and rollback. Phase 6 authorizes none of those production operations.
+The readiness workflow remains read-only: normal runs perform shared static checks and unsigned Adobe payload builds; native candidate dispatch uses the bundled Resolve modules plus an existing matching signed ZXP. The separate [release workflow](.github/workflows/release.yml) detects an increase in `package.json` version on `main`, builds both installers and publishes a **public release** using the matching `.github/releases/vX.Y.Z.md` title and description. It requires the matching Resolve manifest, passing regression/payload checks and existing Adobe signing credentials. The EXE and PKG are unsigned installers; the PKG is not notarized, so operating-system security warnings may appear. This is distinct from the signed Adobe ZXP embedded inside them. An already-pushed version can be retried with **Actions → Build and publish version release → Run workflow → publish_release**. See [RELEASING.md](RELEASING.md#automatic-version-releases) for setup and rollback.
 
 ---
 

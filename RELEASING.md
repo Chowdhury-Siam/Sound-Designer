@@ -1,6 +1,6 @@
 # SoundDesigner release readiness and handoff
 
-The current candidate is **unpublished**. See [compatibility](COMPATIBILITY.md) for remaining native verification requirements. Do not commit, push, tag, production-sign, publish or archive it without separate authorization. The existing public `v1.0.4` release is historical; this dirty candidate is not a replacement release.
+See [compatibility](COMPATIBILITY.md) for remaining native verification requirements. The read-only readiness workflow does not publish candidates. The separate automatic release workflow publishes version bumps after regression checks, Adobe payload signing and installer audits succeed. Public unsigned EXE/PKG distribution is intentional; publication does not establish native certification, installer publisher trust or macOS notarization.
 
 ## CI boundaries
 
@@ -23,6 +23,27 @@ The current candidate is **unpublished**. See [compatibility](COMPATIBILITY.md) 
 Missing inputs fail with `BLOCKED` messages. A filesystem path alone does not supply a module/certificate. Workflow edits were locally reviewed/tested; a remote Actions run is separate evidence. The native-certification reminder's successful shell exit is not certification.
 
 The separate [release banner action](.github/workflows/release-banner.yml) runs after a release is published. Its job has `contents: write` only to embed the commit-pinned artwork in existing release notes and attach the SVG. It does not publish drafts, replace installer assets, or change the readiness/signing gates. See [banner integration](docs/BANNER.md#release-description) for prerequisites and automated-publisher behavior.
+
+## Automatic version releases
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) runs on `main` pushes and compares the current `package.json` version with the version before the push. A strict `X.Y.Z` increase starts release builds; unchanged versions do not publish and decreases fail. No special commit message or manually pushed tag is required. Update the Resolve manifest to match and add `.github/releases/vX.Y.Z.md` in the same push. The notes' first line must be `# SoundDesigner vX.Y.Z — Your release title`; the remaining Markdown becomes the description.
+
+Configure these repository **Secrets** in **Settings → Secrets and variables → Actions**, preserving the existing Adobe publisher identity:
+
+| Secret | Purpose |
+| --- | --- |
+| `SOUNDDESIGNER_ZXP_CERT_BASE64` | Existing Adobe publisher P12 encoded as Base64 |
+| `SOUNDDESIGNER_ZXP_PASSWORD` | Adobe publisher certificate password |
+
+The release matrix targets Windows x64 and macOS arm64 with the bundled matching Resolve modules. Each runner performs regression checks, builds/audits Resolve and builds/signs its matching Adobe ZXP. Signing files are removed afterward. Missing Adobe credentials fail explicitly; CI never creates a new publisher identity. No Resolve Base64 module secrets are required.
+
+**Unsigned installer policy:** the release workflow deliberately uses `SOUNDDESIGNER_INSTALLER_CANDIDATE=1` to assemble the outer EXE and PKG without claiming native certification or outer-installer signing. The user approved distributing the unsigned Mac installer after their Mac testing. Apple signing/notarization credentials and the production-only approval flags are not required for this path. Regression, native-module presence/OS/CPU checks and embedded-payload audits are still mandatory. The SDK module's vendor signature is retained. The PKG is not notarized and the EXE has no Authenticode publisher signature; OS security warnings may appear. Disclose this in each version's release notes. The signed Adobe ZXP inside the installers is a separate signature, not outer-installer trust. The optional signed/notarized Mac assembly path below still retains its original approval requirements.
+
+Only after **both** installer jobs succeed does the publisher verify exact-version installer checksums and stage a private release. It uploads the EXE, PKG, their SHA-256 sidecars and the release SVG, checks uploaded digests/sizes, then publishes with `draft: false`, `prerelease: false` and latest status. The banner is embedded directly because releases created with `GITHUB_TOKEN` do not trigger the separate banner workflow. The internal Adobe ZXP, signing certificates and build directories are never public assets. Failed uploads leave an unpublished draft for inspection; reruns resume matching assets without overwriting them. Existing public releases and drafts/tags targeting another commit are never replaced.
+
+To release an already-pushed version such as **v1.0.5**, first push this workflow, then choose **Actions → Build and publish version release → Run workflow**, select **main**, and enable **publish_release**. This retries the current package version; it does not require an artificial second version bump. If a failed private draft belongs to a different commit or contains mismatched assets, inspect it manually before retrying rather than deleting recovery evidence automatically.
+
+Local checks: `node --test scripts/release-automation.test.mjs scripts/release-banner.test.mjs` and `bun run test:installers`. They do not certify native signing, installation or a live release run.
 
 ## Reproduce the unsigned candidate
 
@@ -63,7 +84,7 @@ bun run installer:windows
 
 On a Mac, `bun run installer:macos` builds Resolve, builds/signs the Adobe ZXP, and assembles an unsigned test PKG in one fail-fast chain. It reuses `SOUNDDESIGNER_ZXP_CERT` or `.signing/SoundDesigner-publisher.p12`. If neither is present/configured, local packaging creates a new local certificate and prompts for a password (minimum 12 characters) and confirmation; signing then asks for that password again unless `SOUNDDESIGNER_ZXP_PASSWORD` is set. This is a new publisher identity, not your original release identity: restore the original certificate for updates requiring that identity. Missing explicit certificate paths and missing CI certificates fail without automatic replacement. This command uses the freshly generated ZXP and automatically selects candidate mode for PKG assembly.
 
-For a prebuilt-input handoff or production assembly, set the corresponding variables and matching `RESOLVE_TARGET_ARCH`, build Resolve on that Mac, then run `bun run installer:macos:assemble`. CI uses this assembly-only command and does not sign the ZXP. Existing outputs are refused; set `SOUNDDESIGNER_INSTALLER_OUTPUT` to a new path for another build. No setup is executed by a builder. Candidate EXEs/PKGs are not production-signed/notarized. The ZXP is an internal input, not a public release asset.
+For a prebuilt-input handoff or production assembly, set the corresponding variables and matching `RESOLVE_TARGET_ARCH`, build Resolve on that Mac, then run `bun run installer:macos:assemble`. Readiness CI uses existing ZXP inputs; release CI builds/signs the ZXP before this assembly-only command. Existing outputs are refused; set `SOUNDDESIGNER_INSTALLER_OUTPUT` to a new path for another build. No setup is executed by a builder. Candidate EXEs/PKGs are not production-signed/notarized. The ZXP is an internal input, not a public release asset.
 
 Windows regression tests compile the current C# worker and execute install/upgrade/rollback/traversal/wrong-module/partial-success cases in scratch directories. Mac script syntax and Distribution choice JavaScript tests do not establish native installation, receipts, permission behavior or recovery. Capture Windows presentation with `node scripts/installer-screenshot.mjs`; capture the native Mac welcome/Customize/completion pages and `pkgutil --pkg-info` outputs on the actual tested Mac. Screenshots must omit credentials and user data.
 
@@ -99,8 +120,8 @@ Close the affected host first. Restore a separately retained known-good host pay
 - Credential mismatch: open the updated host containing the old local key first, then refocus the other updated host. A shared key wins over stale local values; an explicitly cleared key is not resurrected. The machine-local file is user-accessible plaintext, not an encrypted keychain.
 - Resolve loading failure: verify Studio edition, native OS/CPU, SDK source, addon ABI and runtime. Do not rebuild against an unrelated Node/Electron version. Mac permission/architecture/signature failures require the actual target Mac.
 
-## Later publication — separately authorized
+## Publication requirements
 
-Approve the audited candidate and complete all blocked native/signing/installer evidence first. Choose a new release version if replacing the already published historical `v1.0.4`; update the root version and Resolve manifest together, rebuild/audit/re-certify, and add matching release notes. Only separate authorization permits committing, tagging, production-signing or publishing. The readiness workflow does none of these; a green run cannot publish a release.
+Review native-host and installer results, update the root version and Resolve manifest together, and add matching release notes including the unsigned-installer disclosure. With the existing Adobe credentials configured, pushing a version increase to `main` authorizes the automatic unsigned-installer release pipeline described above. An unchanged-version push only runs readiness/release-detection checks; the readiness workflow itself never publishes. The optional production-signed Mac path still requires its separate approvals and Apple credentials.
 
 The updater ignores drafts/prereleases, checks trusted repository URLs, falls back to the release page when no compatible asset exists, and never silently installs an update. Verify both hosts' live current/available/offline/cache behavior before publication.

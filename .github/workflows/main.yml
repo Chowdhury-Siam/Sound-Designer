@@ -36,6 +36,7 @@ jobs:
       - run: bun run test:release-safety
       - run: bun run test:artifact-audit
       - run: bun run test:installers
+      - run: node --test scripts/release-automation.test.mjs scripts/release-banner.test.mjs
 
   adobe-build:
     needs: shared-static

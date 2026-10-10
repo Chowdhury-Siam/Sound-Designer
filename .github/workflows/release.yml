@@ -1,0 +1,175 @@
+name: Build and publish version release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Build and publish the current package version (retry an already pushed bump)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sounddesigner-version-release
+  cancel-in-progress: false
+
+jobs:
+  release-info:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test scripts/release-automation.test.mjs scripts/release-banner.test.mjs
+      - id: plan
+        name: Detect a version increase and validate release metadata
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { readFile } = require('node:fs/promises');
+            const { execFileSync } = require('node:child_process');
+            const { pathToFileURL } = require('node:url');
+            const { resolve } = require('node:path');
+            const { shouldRelease, parseReleaseNotes } = await import(pathToFileURL(resolve('scripts/release-automation.mjs')).href);
+            const { version } = JSON.parse(await readFile('package.json', 'utf8'));
+            let previousVersion;
+            if (context.eventName === 'push' && context.ref === 'refs/heads/main') {
+              const before = context.payload.before;
+              if (!/^[a-f\d]{40}$/i.test(before) || /^0+$/.test(before)) {
+                throw new Error('Cannot establish the previous version; use the manual release retry.');
+              }
+              previousVersion = JSON.parse(execFileSync('git', ['show', `${before}:package.json`], { encoding: 'utf8' })).version;
+            }
+            const publish = shouldRelease({ eventName: context.eventName, ref: context.ref, version, previousVersion,
+              publish: context.payload.inputs?.publish_release === 'true' || context.payload.inputs?.publish_release === true });
+            core.setOutput('publish', 'false');
+            if (!publish) { core.info('No version increase or explicit manual release request.'); return; }
+            const tag = `v${version}`;
+            parseReleaseNotes(await readFile(`.github/releases/${tag}.md`, 'utf8'), version);
+            const manifest = await readFile('resolve/src/manifest.xml', 'utf8');
+            if (!manifest.includes(`<Version>${version}</Version>`)) throw new Error('Resolve manifest version does not match package.json.');
+            try {
+              const { data } = await github.rest.repos.getReleaseByTag({ ...context.repo, tag });
+              if (!data.draft) { core.info(`${tag} is already public; it will not be replaced.`); return; }
+              if (data.target_commitish !== context.sha) throw new Error('Existing draft targets another commit.');
+            } catch (error) { if (error.status !== 404) throw error; }
+            try {
+              const { data } = await github.rest.repos.getCommit({ ...context.repo, ref: tag });
+              if (data.sha !== context.sha) throw new Error('Existing version tag targets another commit.');
+            } catch (error) { if (error.status !== 404) throw error; }
+            core.setOutput('tag', tag);
+            core.setOutput('publish', 'true');
+
+  build-installers:
+    needs: release-info
+    if: needs.release-info.outputs.publish == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: x64
+            native_module: resolve/vendor/windows/WorkflowIntegration.node
+          - os: macos-latest
+            arch: arm64
+            native_module: resolve/vendor/macos/WorkflowIntegration.node
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      RESOLVE_TARGET_ARCH: ${{ matrix.arch }}
+      ALLOW_MISSING_NATIVE: '0'
+      SOUNDDESIGNER_RELEASE_TAG: ${{ needs.release-info.outputs.tag }}
+      # Public unsigned installers are intentional; do not claim native certification.
+      SOUNDDESIGNER_INSTALLER_CANDIDATE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Restore the existing Adobe signing identity and require the native module
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.SOUNDDESIGNER_ZXP_CERT_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.SOUNDDESIGNER_ZXP_PASSWORD }}
+          NATIVE_MODULE: ${{ matrix.native_module }}
+        run: |
+          if (-not $env:CERTIFICATE_BASE64 -or -not $env:CERTIFICATE_PASSWORD) { throw 'Adobe publisher certificate/password secrets are required; CI never creates a new signing identity.' }
+          $native = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_MODULE
+          if (-not (Test-Path -LiteralPath $native -PathType Leaf)) { throw 'Bundled Resolve native module is missing.' }
+          $certificate = Join-Path $env:RUNNER_TEMP 'sounddesigner-publisher.p12'
+          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
+          "SOUNDDESIGNER_ZXP_CERT=$certificate" >> $env:GITHUB_ENV
+          "RESOLVE_WORKFLOW_NODE=$native" >> $env:GITHUB_ENV
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun run test:installers
+      - name: Build and audit the Resolve integration
+        run: bun run build:resolve
+      - name: Build, audit and sign the matching Adobe payload
+        env:
+          SOUNDDESIGNER_ZXP_PASSWORD: ${{ secrets.SOUNDDESIGNER_ZXP_PASSWORD }}
+        run: bun run release:package
+      - if: runner.os == 'Windows'
+        run: bun run installer:windows
+      - if: runner.os == 'macOS'
+        run: bun run installer:macos:assemble
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}
+          path: |
+            release/SoundDesigner-*-Windows-Setup.exe
+            release/SoundDesigner-*-Windows-Setup.exe.sha256
+            release/SoundDesigner-*-macOS.pkg
+            release/SoundDesigner-*-macOS.pkg.sha256
+          if-no-files-found: error
+      - name: Remove temporary signing credentials
+        if: always()
+        shell: pwsh
+        run: |
+          $certificate = Join-Path $env:RUNNER_TEMP 'sounddesigner-publisher.p12'
+          if (Test-Path -LiteralPath $certificate) { Remove-Item -LiteralPath $certificate -Force }
+
+  publish-release:
+    needs: [release-info, build-installers]
+    if: needs.release-info.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: Verify assets, load versioned notes and publish a public release
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { readFile } = require('node:fs/promises');
+            const { resolve } = require('node:path');
+            const { pathToFileURL } = require('node:url');
+            const { parseReleaseNotes, releaseFiles, publishRelease } = await import(pathToFileURL(resolve('scripts/release-automation.mjs')).href);
+            const { version } = JSON.parse(await readFile('package.json', 'utf8'));
+            const notes = parseReleaseNotes(await readFile(`.github/releases/v${version}.md`, 'utf8'), version);
+            const files = await releaseFiles('release-artifacts', version, '.github/assets/SoundDesigner-signal-release.svg');
+            const release = await publishRelease({ github, identity: { ...context.repo, sha: context.sha }, version, notes, files });
+            await core.summary.addLink(`Published v${version}`, release.html_url).write();
