@@ -29,15 +29,6 @@ if (process.platform === "darwin") {
   await mkdir(path.join(root, "output"), { recursive: true });
   const scratch = await mkdtemp(path.join(root, "output", "mac-resource-regression-"));
   try {
-    const menuSource = path.join(root, "resolve", "src", "main", "native", "macos-menu.mm");
-    const menuTest = path.join(scratch, "menu-test");
-    const menuModule = path.join(scratch, "macos-menu.node");
-    const compile = ["clang++", "-fobjc-arc", "-framework", "AppKit", "-mmacosx-version-min=11.0", menuSource];
-    run("/usr/bin/xcrun", [...compile, "-DSOUNDDESIGNER_MENU_TEST", "-o", menuTest]);
-    run(menuTest, []);
-    run("/usr/bin/xcrun", [...compile, "-bundle", "-arch", "x86_64", "-arch", "arm64", "-o", menuModule]);
-    run("/usr/bin/lipo", [menuModule, "-verify_arch", "x86_64", "arm64"]);
-    run(process.execPath, ["-e", "require(process.argv[1]); console.log('Node-API menu bridge loaded successfully');", menuModule]);
     const resources = path.join(scratch, "resources");
     await writeMacInstallerResources(resources, path.join(scratch, "source"));
     run("/usr/bin/pkgbuild", ["--nopayload", "--identifier", "com.sounddesigner.resource-regression", "--version", "1.0.0", path.join(scratch, "empty.pkg")]);

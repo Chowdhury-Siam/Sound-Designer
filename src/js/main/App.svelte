@@ -341,6 +341,7 @@ import { isCloudSound } from "./cloudLibrary";
   let storageInfo = $state<PlatformStorageInfo | null>(null);
   let storageBusy = $state(false);
   let portablePreferencesReady = $state(!platform().capabilities.nativeStorage);
+  let persistedPortablePreferences = "";
   let sfxAssistantOpen = $state(false);
   let settingsFolderId = $state<string | null>(null);
   let autoPreview = $state(preferences.autoPreview);
@@ -463,9 +464,8 @@ import { isCloudSound } from "./cloudLibrary";
   let processingPreparationTimer = 0;
   let waveformAnalysisTimer = 0;
   let waveformAnalysisBusy = false;
-  const waveformAnalysisQueue: string[] = [];
-  const waveformAnalysisQueued = new Set<string>();
-  const waveformAnalysisPriority = new Set<string>();
+  let waveformAnalysisQueue: SoundFile[] = [];
+  let waveformAnalysisVisibleIds = new Set<string>();
   const freesoundSessionCache = new Map<string, SoundFile>();
   const preparingSounds = new Map<string, Promise<SoundFile>>();
   const preparedProcessingCache = new Map<string, SoundFile>();
@@ -580,9 +580,9 @@ import { isCloudSound } from "./cloudLibrary";
     }
     return ids;
   });
+  let queryTokens = $derived((activeTab?.query || "").toLowerCase().trim().split(/\s+/).filter(Boolean));
   let localVisibleSounds = $derived.by(() => {
     if (!localSourceEnabled) return [];
-    const queryTokens = (activeTab?.query || "").toLowerCase().trim().split(/\s+/).filter(Boolean);
     return sounds.filter((sound) => {
       if (filter !== "favorites" && selectedFolder !== "all" && !selectedDirectoryIds.has(sound.directoryId)) return false;
       if (filter === "favorites" && !sound.favorite) return false;
@@ -599,7 +599,7 @@ import { isCloudSound } from "./cloudLibrary";
   let freesoundVisibleSounds = $derived(cloudSourceActive && (selectedFolder === "all" || filter === "favorites") ? cloudBrowseSounds.filter((sound) => {
     if (filter === "favorites" && !sound.favorite) return false;
     if (filter === "favorites" && favoriteCollection !== "all" && (sound.favoriteCollection || "") !== favoriteCollection) return false;
-    if (filter === "favorites" && !(activeTab?.query || "").toLowerCase().trim().split(/\s+/).filter(Boolean).every(token => soundSearchText(sound).includes(token))) return false;
+    if (filter === "favorites" && !queryTokens.every(token => soundSearchText(sound).includes(token))) return false;
     if (filter === "ambience" && !sound.tags.includes("ambience") && sound.duration < 10) return false;
     if (filter === "one-shot" && sound.duration > 8) return false;
     if (labelFilter && sound.labelColor !== labelFilter) return false;
@@ -651,7 +651,7 @@ import { isCloudSound } from "./cloudLibrary";
     const compact = compactWaveformFromChannels(channels);
     if (compact.length < 2) return;
     const current = sounds.find((item) => item.id === sound.id);
-    if (!current) return;
+    if (!current || current.path !== sound.path || current.size !== sound.size || current.modifiedAt !== sound.modifiedAt) return;
     current.waveform = compact;
     current.waveformReal = true;
     saveSoundMetadata(current, { waveform: compact });
@@ -661,54 +661,35 @@ import { isCloudSound } from "./cloudLibrary";
     if (waveformAnalysisTimer || waveformAnalysisBusy || !waveformAnalysisQueue.length) return;
     waveformAnalysisTimer = window.setTimeout(async () => {
       waveformAnalysisTimer = 0;
-      if (document.hidden || isIndexing) {
-        scheduleWaveformAnalysis(1200);
-        return;
-      }
-      const soundId = waveformAnalysisQueue.shift();
-      if (!soundId) return;
-      waveformAnalysisQueued.delete(soundId);
-      waveformAnalysisPriority.delete(soundId);
-      const sound = sounds.find((item) => item.id === soundId);
-      if (!sound || !sound.path || sound.waveformReal || sound.size > 32 * 1024 * 1024 || sound.duration > 120) {
-        scheduleWaveformAnalysis(waveformAnalysisPriority.has(waveformAnalysisQueue[0] || "") ? 40 : 160);
+      if (document.hidden || isIndexing) return;
+      const sound = waveformAnalysisQueue.shift();
+      if (!sound) return;
+      if (sound.waveformReal || sound.id === selectedId) {
+        scheduleWaveformAnalysis(160);
         return;
       }
       waveformAnalysisBusy = true;
       try {
-        const channels = await decodeAudioWaveformChannels(sound.path, sound.size, sound.modifiedAt, sound.duration);
-        commitRealWaveform(sound, channels);
+        const stillVisible = () => !document.hidden && !isIndexing && waveformAnalysisVisibleIds.has(sound.id);
+        const channels = await decodeAudioWaveformChannels(sound.path, sound.size, sound.modifiedAt, sound.duration, stillVisible);
+        if (stillVisible()) commitRealWaveform(sound, channels);
       } finally {
         waveformAnalysisBusy = false;
-        scheduleWaveformAnalysis(waveformAnalysisPriority.has(waveformAnalysisQueue[0] || "") ? 80 : playing ? 1100 : 650);
+        if (!document.hidden && !isIndexing) scheduleWaveformAnalysis(playing ? 1100 : 650);
       }
     }, delay);
   };
 
-  const enqueueWaveformAnalysis = (candidates: SoundFile[], priority = false) => {
-    const ids: string[] = [];
-    for (const sound of candidates) {
-      if (!sound.path || isCloudSound(sound) || sound.waveformReal) continue;
-      if (waveformAnalysisQueued.has(sound.id)) {
-        if (priority) {
-          const queuedIndex = waveformAnalysisQueue.indexOf(sound.id);
-          if (queuedIndex >= 0) waveformAnalysisQueue.splice(queuedIndex, 1);
-          waveformAnalysisPriority.add(sound.id);
-          ids.push(sound.id);
-        }
-        continue;
-      }
-      waveformAnalysisQueued.add(sound.id);
-      if (priority) waveformAnalysisPriority.add(sound.id);
-      ids.push(sound.id);
-    }
-    if (priority) waveformAnalysisQueue.unshift(...ids);
-    else waveformAnalysisQueue.push(...ids);
-    if (priority && ids.length && waveformAnalysisTimer) {
+  const enqueueWaveformAnalysis = (candidates: SoundFile[]) => {
+    // Analyze only the current virtual window; scrolling replaces stale work.
+    waveformAnalysisQueue = candidates.filter(sound => sound.path && !isCloudSound(sound) && !sound.waveformReal
+      && sound.size <= 32 * 1024 * 1024 && sound.duration <= 120);
+    waveformAnalysisVisibleIds = new Set(waveformAnalysisQueue.map(sound => sound.id));
+    if ((document.hidden || isIndexing || !waveformAnalysisQueue.length) && waveformAnalysisTimer) {
       window.clearTimeout(waveformAnalysisTimer);
       waveformAnalysisTimer = 0;
     }
-    scheduleWaveformAnalysis(priority ? 30 : 650);
+    if (!document.hidden && !isIndexing) scheduleWaveformAnalysis(120);
   };
 
   const setLibraryWidth = (value: number, persist = false) => {
@@ -938,9 +919,12 @@ import { isCloudSound } from "./cloudLibrary";
   $effect(() => {
     if (!portablePreferencesReady || !platform().capabilities.nativeStorage) return;
     const value = portablePreferences();
+    const serialized = JSON.stringify(value);
+    if (serialized === persistedPortablePreferences) return;
     const timer = window.setTimeout(() => {
       void platform().storage.savePreferences(value).then((result) => {
-        if (!result.ok) notify("warning", result.error.message);
+        if (result.ok) persistedPortablePreferences = serialized;
+        else notify("warning", result.error.message);
       });
     }, 120);
     return () => window.clearTimeout(timer);
@@ -991,7 +975,9 @@ import { isCloudSound } from "./cloudLibrary";
 
   $effect(() => {
     const visibleLocalSounds = renderedSounds.filter((sound) => !isCloudSound(sound));
-    untrack(() => enqueueWaveformAnalysis(visibleLocalSounds, true));
+    isIndexing;
+    selectedId;
+    untrack(() => enqueueWaveformAnalysis(visibleLocalSounds));
   });
 
   $effect(() => {
@@ -1390,7 +1376,10 @@ import { isCloudSound } from "./cloudLibrary";
       }
       const stored = await platform().storage.getPreferences();
       if (cancelled) { refreshing = false; return; }
-      if (stored.ok && stored.data) applyPortablePreferences(stored.data);
+      if (stored.ok && stored.data) {
+        applyPortablePreferences(stored.data);
+        persistedPortablePreferences = JSON.stringify(portablePreferences());
+      }
       portablePreferencesReady = true;
       refreshing = false;
     };
@@ -1407,10 +1396,18 @@ import { isCloudSound } from "./cloudLibrary";
 
   onMount(() => {
     const flush = () => flushLibraryMetadata();
+    const resumeWaveforms = () => {
+      if (document.hidden) flushLibraryMetadata();
+      enqueueWaveformAnalysis(renderedSounds);
+    };
     window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", resumeWaveforms);
     return () => {
       window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", resumeWaveforms);
       if (waveformAnalysisTimer) window.clearTimeout(waveformAnalysisTimer);
+      waveformAnalysisQueue = [];
+      waveformAnalysisVisibleIds.clear();
       flushLibraryMetadata();
     };
   });
@@ -1703,7 +1700,6 @@ import { isCloudSound } from "./cloudLibrary";
         folders = hydrated.folders;
         sounds = hydrated.sounds;
         selectedId = "";
-        enqueueWaveformAnalysis(hydrated.sounds);
         tabs = createLibraryTabs();
         activeTabId = "search-library";
         if (failedStoredPaths || restoreSkippedPaths) {
@@ -2142,7 +2138,6 @@ import { isCloudSound } from "./cloudLibrary";
       sounds = hydrated.sounds;
       persistLibraryFolders(hydrated.folders);
       selectedId = "";
-      enqueueWaveformAnalysis(hydrated.sounds.filter((sound) => sound.folderId === result.folder.id));
       if (nextFolders.length === 1) {
         tabs = createLibraryTabs();
         activeTabId = "search-library";
@@ -2219,7 +2214,6 @@ import { isCloudSound } from "./cloudLibrary";
       sounds = hydrated.sounds;
       selectedId = "";
       persistLibraryFolders(hydrated.folders);
-      enqueueWaveformAnalysis(hydrated.sounds);
       const refreshHasWarnings = failedLibraries > 0 || skippedPaths > 0;
       const refreshDetail = refreshHasWarnings
         ? ` - ${failedLibraries} libraries unavailable - ${skippedPaths} paths skipped`

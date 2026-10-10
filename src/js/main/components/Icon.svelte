@@ -1,7 +1,7 @@
 <script lang="ts">
   export type IconName =
     | "activity" | "add" | "back" | "check" | "chevron" | "close" | "collapse" | "download"
-    | "cloud" | "cloudCheck" | "drive" | "drag" | "folder" | "forward" | "grid" | "heart" | "library" | "list" | "loop"
+    | "cloud" | "cloudCheck" | "drive" | "drag" | "folder" | "folderStack" | "forward" | "grid" | "heart" | "library" | "list" | "loop"
     | "lock" | "unlock" | "minus" | "more" | "next" | "pause" | "pin" | "play" | "previous" | "refresh"
     | "reverse" | "search" | "settings" | "sliders" | "sparkles" | "stop"
     | "trash" | "volume" | "waveform" | "zoomIn" | "zoomOut";
@@ -22,6 +22,7 @@
     drive: '<path d="M5 6h14l2 9H3l2-9Z" /><path d="M3 15v3h18v-3M16.5 16.5h.01M13.5 16.5h.01" />',
     drag: '<path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />',
     folder: '<path d="M3 7.5h7l2-2h9v13H3z" />',
+    folderStack: '<path d="M3 6h6l2-2h8v3M3 6v10" /><path d="M6 10h6l2-2h7v12H6z" />',
     forward: '<path d="m9 18 6-6-6-6" />',
     heart: '<path d="M20.2 5.8a5.5 5.5 0 0 0-7.8 0L12 6.2l-.4-.4a5.5 5.5 0 0 0-7.8 7.8L12 21l8.2-7.4a5.5 5.5 0 0 0 0-7.8Z" />',
     grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',

@@ -17,7 +17,7 @@ try {
   });
   await page.goto("http://127.0.0.1:3000/main/");
   await page.getByRole("button", {name: "Keep library sidebar visible"}).click();
-  await page.locator('[data-library-node="root"] .library-tree-select').click();
+  await page.locator('[data-library-node*="root"] .library-tree-select').click();
   await page.getByRole("button", {name: "Switch to waveform grid"}).click();
   await page.evaluate(() => {
     document.querySelector(".hero-search").dataset.tooltip = "/Users/rasel/Documents/Assets/NO COPYRIGHT SOUND/SFX/" + "VeryLongNestedFolderName".repeat(8);

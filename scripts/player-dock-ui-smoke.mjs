@@ -49,7 +49,7 @@ try {
   await page.mouse.move(range.x + range.width * .6, range.y + range.height / 2, {steps: 5});
   await page.mouse.up();
   assert.ok(Number(await page.getByRole("slider", {name:"Segment end", exact:true}).getAttribute("aria-valuenow")) > 4, "Dragging selects an audio range");
-  await page.getByRole("button", {name:"Clear", exact:true}).click();
+  await page.getByRole("button", {name:"Clear selected segment", exact:true}).click();
   await waveform.focus();
   await page.keyboard.press("Enter");
   assert.equal(await page.getByRole("slider", {name:"Segment start", exact:true}).count(), 1);

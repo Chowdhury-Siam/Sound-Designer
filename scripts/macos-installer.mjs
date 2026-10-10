@@ -176,11 +176,10 @@ export const componentScript = (target, phase, runtimeArch = "arm64") => {
   for file in CSXS/manifest.xml main/index.html META-INF/signatures.xml; do [ -s "$tree/$file" ] || return 1; done
   [ "$(/usr/bin/xmllint --xpath 'string(/*/@ExtensionBundleId)' "$tree/CSXS/manifest.xml")" = 'com.rksound.designer' ]
 ` : `
-  for file in manifest.xml package.json main.cjs preload.cjs ui/index.html WorkflowIntegration.node macos-menu.node; do [ -s "$tree/$file" ] || return 1; done
+  for file in manifest.xml package.json main.cjs preload.cjs ui/index.html WorkflowIntegration.node; do [ -s "$tree/$file" ] || return 1; done
   [ "$(/usr/bin/xmllint --xpath 'string(//Id)' "$tree/manifest.xml")" = 'com.sound.designer.resolve' ] || return 1
   /usr/bin/grep -Eq '"name"[[:space:]]*:[[:space:]]*"com\\.sound\\.designer\\.resolve"' "$tree/package.json" || return 1
-  /usr/bin/lipo "$tree/WorkflowIntegration.node" -verify_arch ${runtimeArch} || return 1
-  /usr/bin/lipo "$tree/macos-menu.node" -verify_arch ${runtimeArch}
+  /usr/bin/lipo "$tree/WorkflowIntegration.node" -verify_arch ${runtimeArch}
 `;
   const hostCheck = target === "adobe"
     ? `/usr/bin/pgrep -f '/Contents/MacOS/(After Effects|Adobe Premiere Pro)' >/dev/null`

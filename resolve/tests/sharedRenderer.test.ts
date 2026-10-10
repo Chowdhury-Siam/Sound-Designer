@@ -35,6 +35,12 @@ describe("shared renderer boundary", () => {
     expect(adobe).toContain('import App from "./App.svelte"');
     expect(resolve).toContain('import App from "../../../src/js/main/App.svelte"');
     expect(resolve).toContain('import "../../../src/js/index.scss"');
+    expect(adobe).toContain('import { applyHostTheme } from "./theme"');
+    expect(resolve).toContain('import { applyHostTheme } from "../../../src/js/main/theme"');
+    for (const entry of [adobe, resolve]) {
+      expect(entry.indexOf("applyHostTheme(platform.mode)")).toBeGreaterThan(entry.indexOf("registerPlatform(platform)"));
+      expect(entry.indexOf("applyHostTheme(platform.mode)")).toBeLessThan(entry.indexOf("mount(App"));
+    }
   });
 
   test("shared components do not import host runtimes or raw filesystem APIs", async () => {

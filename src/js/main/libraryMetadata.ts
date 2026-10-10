@@ -50,6 +50,8 @@ const EMPTY_DOCUMENT = (): MetadataDocument => ({ version: 1, sounds: {}, folder
 let documentCache: MetadataDocument | null = null;
 let saveTimer = 0;
 let metadataDirty = false;
+let metadataRevision = 0;
+let savingRevision: number | null = null;
 let legacyDocument: MetadataDocument | null = null;
 
 const nativeKey = (nativePath: string) => {
@@ -129,23 +131,31 @@ export const flushLibraryMetadata = () => {
   if (saveTimer) window.clearTimeout(saveTimer);
   saveTimer = 0;
   if (!documentCache || !metadataDirty) return;
+  if (savingRevision === metadataRevision) return;
   metadataDirty = false;
   documentCache.updatedAt = Date.now();
   const serialized = JSON.stringify(documentCache);
-  if (platform().capabilities.nativeStorage) void platform().storage.saveLibraryMetadata(documentCache);
+  if (platform().capabilities.nativeStorage) {
+    metadataDirty = true;
+    const revision = metadataRevision;
+    savingRevision = revision;
+    // Snapshot edits before the asynchronous storage service can observe newer ones.
+    void platform().storage.saveLibraryMetadata(JSON.parse(serialized)).then(result => {
+      if (savingRevision === revision) savingRevision = null;
+      if (revision === metadataRevision) metadataDirty = !result.ok;
+    }, () => {
+      if (savingRevision === revision) savingRevision = null;
+      if (revision === metadataRevision) metadataDirty = true;
+    });
+  }
   const filePath = metadataPath();
   if (filePath && typeof fs.writeFileSync === "function") {
     const directory = path.dirname(filePath);
-    const temporary = `${filePath}.tmp`;
+    const temporary = `${filePath}.${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`;
     try {
       if (!fs.existsSync(directory)) fs.mkdirSync(directory);
       fs.writeFileSync(temporary, serialized, "utf8");
-      try {
-        fs.renameSync(temporary, filePath);
-      } catch (_renameError) {
-        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-        fs.renameSync(temporary, filePath);
-      }
+      fs.renameSync(temporary, filePath);
       return;
     } catch (_error) {
       try { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); } catch (_cleanupError) {}
@@ -187,6 +197,7 @@ export const loadPortableLibraryMetadata = async () => {
 
 const scheduleSave = () => {
   metadataDirty = true;
+  metadataRevision += 1;
   if (saveTimer) window.clearTimeout(saveTimer);
   saveTimer = window.setTimeout(flushLibraryMetadata, 700);
 };

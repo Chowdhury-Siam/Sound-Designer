@@ -1,6 +1,6 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { open, readFile, stat, writeFile } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { app, BrowserWindow, dialog, Menu, nativeImage, protocol } from "electron";
 import { PLUGIN_ID } from "../shared/types";
@@ -16,6 +16,7 @@ let library: LibraryService | null = null;
 let libraryRoot = "";
 let storage: StorageService | null = null;
 let cleanupStarted = false;
+let startupReady = false;
 
 const getPluginRoot = (): string => app.getAppPath();
 
@@ -245,6 +246,7 @@ app.whenReady().then(async () => {
     app.quit();
     return;
   }
+  if (cleanupStarted) return;
   // Keep existing Chromium state and legacy storage paths when branding the hosted runtime.
   const userDataPath = app.getPath("userData");
   app.setName("SoundDesigner");
@@ -265,19 +267,10 @@ app.whenReady().then(async () => {
       { role: "editMenu" },
       { role: "windowMenu" },
     ]));
-    let menuStatus = `loaded (runtime ${process.arch})`;
-    try {
-      const requireNative = createRequire(path.join(getPluginRoot(), "package.json"));
-      requireNative(path.join(getPluginRoot(), "macos-menu.node"));
-    } catch (error) {
-      menuStatus = `failed (runtime ${process.arch}): ${error instanceof Error ? error.message : String(error)}`;
-      console.error("SoundDesigner native menu branding failed", error);
-    }
-    void writeFile(path.join(app.getPath("appData"), "SoundDesigner", "macos-menu.log"), `${new Date().toISOString()} ${menuStatus}\n`, "utf8")
-      .catch(error => console.error("SoundDesigner menu diagnostic write failed", error));
   }
   registerUiProtocol();
   registerIpcHandlers(getHost, getLibrary, getStorage);
+  startupReady = true;
   createWindow();
 }).catch(async (error: unknown) => {
   console.error("SoundDesigner startup failed", error);
@@ -298,5 +291,6 @@ app.on("before-quit", (event: any) => {
 app.on("window-all-closed", () => app.quit());
 
 app.on("activate", () => {
+  if (!startupReady || cleanupStarted) return;
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });

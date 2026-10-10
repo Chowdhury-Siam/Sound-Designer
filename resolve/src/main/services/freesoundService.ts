@@ -11,7 +11,7 @@ const trustedUrl = (value: string): URL => {
   } catch {
     throw new ContractError("INVALID_FREESOUND_URL", "The Freesound URL is invalid.");
   }
-  if (url.protocol !== "https:" || url.username || url.password || !FREESOUND_HOSTS.has(url.hostname)) {
+  if (url.protocol !== "https:" || url.port || url.username || url.password || !FREESOUND_HOSTS.has(url.hostname)) {
     throw new ContractError("INVALID_FREESOUND_URL", "The remote audio source is not trusted.");
   }
   return url;
@@ -38,10 +38,28 @@ export const extensionFromFreesoundUrl = (value: string): string => {
 const responseBytes = async (response: Response, limit: number): Promise<Uint8Array> => {
   const declared = Number(response.headers.get("content-length") || 0);
   if (declared > limit) throw new ContractError("REMOTE_RESPONSE_TOO_LARGE", "Freesound returned more data than SoundDesigner can safely process.");
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (!bytes.byteLength || bytes.byteLength > limit) {
-    throw new ContractError("REMOTE_RESPONSE_TOO_LARGE", "Freesound returned an empty or oversized response.");
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!bytes.byteLength || bytes.byteLength > limit) throw new ContractError("REMOTE_RESPONSE_TOO_LARGE", "Freesound returned an empty or oversized response.");
+    return bytes;
   }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.byteLength;
+    if (length > limit) {
+      await reader.cancel();
+      throw new ContractError("REMOTE_RESPONSE_TOO_LARGE", "Freesound returned an empty or oversized response.");
+    }
+    chunks.push(value);
+  }
+  if (!length) throw new ContractError("REMOTE_RESPONSE_TOO_LARGE", "Freesound returned an empty or oversized response.");
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   return bytes;
 };
 
@@ -58,6 +76,7 @@ const assertResponse = (response: Response, action: string): void => {
 export const searchFreesoundApi = async (url: string, apiKey: string, signal: AbortSignal): Promise<unknown> => {
   const response = await fetch(validateFreesoundSearchUrl(url), {
     headers: { Accept: "application/json", Authorization: `Token ${apiKey}` },
+    redirect: "error",
     signal,
   });
   assertResponse(response, "Freesound search");
@@ -75,7 +94,16 @@ export const downloadFreesoundAudio = async (
   onProgress: (receivedBytes: number, totalBytes?: number) => void,
   maximumBytes = MAX_AUDIO_BYTES,
 ): Promise<Uint8Array> => {
-  const response = await fetch(validateFreesoundAudioUrl(url), { headers: { Accept: "audio/*" }, signal });
+  let source = validateFreesoundAudioUrl(url);
+  let response: Response;
+  for (let redirects = 0; ; redirects++) {
+    response = await fetch(source, { headers: { Accept: "audio/*" }, signal, redirect: "manual" });
+    if (![301, 302, 303, 307, 308].includes(response.status)) break;
+    await response.body?.cancel();
+    const location = response.headers.get("location");
+    if (!location || redirects >= 4) throw new ContractError("INVALID_FREESOUND_URL", "Freesound redirected the download too many times or omitted its address.");
+    source = validateFreesoundAudioUrl(new URL(location, source).toString());
+  }
   assertResponse(response, "Freesound download");
   const total = Number(response.headers.get("content-length") || 0) || undefined;
   if (total && total > maximumBytes) {

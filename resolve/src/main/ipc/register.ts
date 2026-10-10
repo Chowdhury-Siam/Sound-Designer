@@ -14,6 +14,8 @@ import { ProjectStorage } from "../services/projectStorage";
 import type { StorageService } from "../services/storageService";
 import { downloadFreesoundAudio, extensionFromFreesoundUrl, searchFreesoundApi, validateFreesoundAudioUrl, validateFreesoundSearchUrl } from "../services/freesoundService";
 import { downloadCloudSfxAudio, searchCloudSfx } from "../services/cloudSfxService";
+import { isTrustedUiSender } from "../uiProtocol";
+import { AUDIO_INPUT_EXTENSIONS } from "../../shared/audioFormats";
 
 type HostFactory = () => ResolveHostAdapter;
 type LibraryFactory = () => LibraryService;
@@ -49,7 +51,7 @@ const cloudOperations = new Map<string, AbortController>();
 
 const requireAudioPath = (value: unknown): string => {
   const filePath = parseDragPath(value);
-  if (!path.isAbsolute(filePath) || !AUDIO_EXTENSIONS.has(path.extname(filePath).slice(1).toLowerCase())) {
+  if (!path.isAbsolute(filePath) || !AUDIO_INPUT_EXTENSIONS.has(path.extname(filePath).slice(1).toLowerCase())) {
     throw new ContractError("INVALID_AUDIO_PATH", "The selected path is not a supported absolute audio-file path.");
   }
   return filePath;
@@ -106,11 +108,10 @@ const safeFileName = (value: string): string => value
 
 const stableId = (value: string): string => createHash("sha1").update(value).digest("hex").slice(0, 16);
 
-const writeAtomically = async (outputPath: string, bytes: Uint8Array, replace = false): Promise<void> => {
+const writeAtomically = async (outputPath: string, bytes: Uint8Array): Promise<void> => {
   const temporaryPath = `${outputPath}.${randomUUID()}.part`;
   try {
     await writeFile(temporaryPath, bytes);
-    if (replace) await rm(outputPath, { force: true });
     await rename(temporaryPath, outputPath);
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
@@ -119,7 +120,7 @@ const writeAtomically = async (outputPath: string, bytes: Uint8Array, replace = 
 
 const writeMetadata = async (metadataDirectory: string, outputPath: string, value: Record<string, unknown>): Promise<void> => {
   const metadataPath = path.join(metadataDirectory, `${path.basename(outputPath, path.extname(outputPath))}.json`);
-  await writeAtomically(metadataPath, new TextEncoder().encode(`${JSON.stringify(value, null, 2)}\n`), true);
+  await writeAtomically(metadataPath, new TextEncoder().encode(`${JSON.stringify(value, null, 2)}\n`));
 };
 
 const requireOperationId = (value: unknown): string => requireId(value, "Operation ID");
@@ -194,24 +195,30 @@ const withCloudOperation = async <T>(operationId: string, timeoutMs: number, ope
 };
 
 export const registerIpcHandlers = (getHost: HostFactory, getLibrary: LibraryFactory, getStorage: StorageFactory): void => {
+  const handle = (channel: string, listener: (event: any, ...args: any[]) => unknown): void => {
+    ipcMain.handle(channel, (event: any, ...args: unknown[]) => {
+      if (!isTrustedUiSender(event)) return { ok: false, error: { code: "UNTRUSTED_SENDER", message: "Only the SoundDesigner window can perform this operation." } };
+      return listener(event, ...args);
+    });
+  };
   const credentials = new FreesoundCredentialStore(fs, path.join(app.getPath("appData"), "SoundDesigner"));
-  ipcMain.handle("storage:get-freesound-api-key", (_event: unknown, legacyKey: unknown) => safe(async () => credentials.get(legacyKey)));
-  ipcMain.handle("storage:save-freesound-api-key", (_event: unknown, value: unknown) => safe(async () => {
+  handle("storage:get-freesound-api-key", (_event: unknown, legacyKey: unknown) => safe(async () => credentials.get(legacyKey)));
+  handle("storage:save-freesound-api-key", (_event: unknown, value: unknown) => safe(async () => {
     await credentials.save(value);
     return { saved: true as const };
   }));
-  ipcMain.handle("runtime:set-always-on-top", (event: any, value: unknown) => safe(async () => {
+  handle("runtime:set-always-on-top", (event: any, value: unknown) => safe(async () => {
     if (typeof value !== "boolean") throw new ContractError("INVALID_ARGUMENT", "Always-on-top state must be a boolean.");
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window) throw new ResolveHostError("WINDOW_UNAVAILABLE", "The SoundDesigner window is unavailable.");
     window.setAlwaysOnTop(value);
     return { alwaysOnTop: window.isAlwaysOnTop() };
   }));
-  ipcMain.handle("runtime:open-external", (_event: unknown, value: unknown) => safe(async () => {
+  handle("runtime:open-external", (_event: unknown, value: unknown) => safe(async () => {
     await shell.openExternal(parseExternalUrl(value));
     return { opened: true as const };
   }));
-  ipcMain.handle("runtime:get-latest-release", (_event: unknown, value: unknown) => safe<GithubReleaseResponse>(async () => {
+  handle("runtime:get-latest-release", (_event: unknown, value: unknown) => safe<GithubReleaseResponse>(async () => {
     const etag = value === undefined ? undefined : requireId(value, "Update ETag");
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8_000);
@@ -241,20 +248,20 @@ export const registerIpcHandlers = (getHost: HostFactory, getLibrary: LibraryFac
       clearTimeout(timeout);
     }
   }));
-  ipcMain.handle("storage:get-info", () => safe<StorageInfo>(async () => getStorage().info));
-  ipcMain.handle("storage:get-preferences", () => safe<PortablePreferences | null>(async () =>
+  handle("storage:get-info", () => safe<StorageInfo>(async () => getStorage().info));
+  handle("storage:get-preferences", () => safe<PortablePreferences | null>(async () =>
     (await getStorage().readPreferences<PortablePreferences>()) ?? null));
-  ipcMain.handle("storage:save-preferences", (_event: unknown, value: unknown) => safe(async () => {
+  handle("storage:save-preferences", (_event: unknown, value: unknown) => safe(async () => {
     await getStorage().writePreferences(parsePortablePreferences(value));
     return { saved: true as const };
   }));
-  ipcMain.handle("storage:get-library-metadata", () => safe<PortableLibraryMetadata | null>(async () =>
+  handle("storage:get-library-metadata", () => safe<PortableLibraryMetadata | null>(async () =>
     (await getStorage().readLibraryMetadata<PortableLibraryMetadata>()) ?? null));
-  ipcMain.handle("storage:save-library-metadata", (_event: unknown, value: unknown) => safe(async () => {
+  handle("storage:save-library-metadata", (_event: unknown, value: unknown) => safe(async () => {
     await getStorage().writeLibraryMetadata(parsePortableLibraryMetadata(value));
     return { saved: true as const };
   }));
-  ipcMain.handle("storage:change-location", () => safe<StorageInfo | null>(async () => {
+  handle("storage:change-location", () => safe<StorageInfo | null>(async () => {
     const selection = await dialog.showOpenDialog({
       title: "Choose SoundDesigner storage folder",
       buttonLabel: "Use this folder",
@@ -276,19 +283,19 @@ export const registerIpcHandlers = (getHost: HostFactory, getLibrary: LibraryFac
     if (confirmation.response !== 0) return null;
     return getStorage().changeRoot(selectedPath);
   }));
-  ipcMain.handle("resolve:get-context", () => safe<ResolveContext>(() => getHost().getProjectContext()));
-  ipcMain.handle("resolve:ensure-bin", () => safe(() => getHost().ensureSoundDesignerBin()));
-  ipcMain.handle("resolve:import-audio", (_event: unknown, value: unknown) =>
+  handle("resolve:get-context", () => safe<ResolveContext>(() => getHost().getProjectContext()));
+  handle("resolve:ensure-bin", () => safe(() => getHost().ensureSoundDesignerBin()));
+  handle("resolve:import-audio", (_event: unknown, value: unknown) =>
     safe(() => getHost().importPreparedAudio(parseImportAudioRequest(value))));
-  ipcMain.handle("resolve:insert-audio", (_event: unknown, value: unknown) =>
+  handle("resolve:insert-audio", (_event: unknown, value: unknown) =>
     safe(() => getHost().insertAtPlayhead(parseInsertAudioRequest(value))));
-  ipcMain.handle("resolve:analyze-sfx", (_event: unknown, value: unknown) => safe(() => {
+  handle("resolve:analyze-sfx", (_event: unknown, value: unknown) => safe(() => {
     const request = parseResolveSfxAnalysisRequest(value);
     return getHost().analyzeSfx(request.scope, request.density);
   }));
-  ipcMain.handle("resolve:place-sfx", (_event: unknown, value: unknown) =>
+  handle("resolve:place-sfx", (_event: unknown, value: unknown) =>
     safe(() => getHost().placeSfx(parseResolveSfxPlacementRequest(value))));
-  ipcMain.handle("audio:choose-wav", () => safe<SelectedAudioFile | null>(async () => {
+  handle("audio:choose-wav", () => safe<SelectedAudioFile | null>(async () => {
     const selection = await dialog.showOpenDialog({
       title: "Select a WAV for the Resolve feasibility test",
       buttonLabel: "Select WAV",
@@ -300,6 +307,7 @@ export const registerIpcHandlers = (getHost: HostFactory, getLibrary: LibraryFac
   }));
   ipcMain.on("audio:start-drag", async (event: any, value: unknown) => {
     try {
+      if (!isTrustedUiSender(event)) throw new ContractError("UNTRUSTED_SENDER", "Only the SoundDesigner window can start a drag.");
       const request = parseImportAudioRequest(value);
       await getHost().importPreparedAudio(request, true);
       startNativeDrag(event.sender, request.path);
@@ -307,13 +315,13 @@ export const registerIpcHandlers = (getHost: HostFactory, getLibrary: LibraryFac
       if (!event.sender.isDestroyed()) event.sender.send("audio:drag-error", publicError(error));
     }
   });
-  ipcMain.handle("audio:read-file", (_event: unknown, value: unknown) => safe<Uint8Array>(async () => {
+  handle("audio:read-file", (_event: unknown, value: unknown) => safe<Uint8Array>(async () => {
     const filePath = requireAudioPath(value);
     const details = await stat(filePath);
     if (!details.isFile() || details.size > MAX_AUDIO_BYTES) throw new ContractError("AUDIO_TOO_LARGE", "The audio file is unavailable or exceeds the 512 MB limit.");
     return new Uint8Array(await readFile(filePath));
   }));
-  ipcMain.handle("audio:write-prepared", (_event: unknown, value: unknown) => safe<PreparedAudioFile>(async () => {
+  handle("audio:write-prepared", (_event: unknown, value: unknown) => safe<PreparedAudioFile>(async () => {
     const request = preparedRequest(value);
     const context = await getHost().getProjectContext();
     if (context.projectId !== request.projectId) throw new ResolveHostError("CONTEXT_CHANGED", "The active Resolve project changed before audio preparation completed.");
@@ -343,11 +351,11 @@ export const registerIpcHandlers = (getHost: HostFactory, getLibrary: LibraryFac
     if (current.projectId !== context.projectId) throw new ResolveHostError("CONTEXT_CHANGED", "The active Resolve project changed while audio was being prepared.");
     return { path: outputPath, projectRoot: locations.root, size: details.size, modifiedAt: details.mtimeMs };
   }));
-  ipcMain.handle("cloud:freesound-search", (_event: unknown, value: unknown) => safe<unknown>(async () => {
+  handle("cloud:freesound-search", (_event: unknown, value: unknown) => safe<unknown>(async () => {
     const request = freesoundSearchRequest(value);
     return withCloudOperation(request.operationId, 30_000, (signal) => searchFreesoundApi(request.url, request.apiKey, signal));
   }));
-  ipcMain.handle("cloud:freesound-download", (event: any, value: unknown) => safe<PreparedAudioFile>(async () => {
+  handle("cloud:freesound-download", (event: any, value: unknown) => safe<PreparedAudioFile>(async () => {
     const request = freesoundDownloadRequest(value);
     const context = await getHost().getProjectContext();
     const locations = await new ProjectStorage(getStorage().root).ensure(context);
@@ -390,20 +398,20 @@ export const registerIpcHandlers = (getHost: HostFactory, getLibrary: LibraryFac
       return { path: outputPath, projectRoot: locations.root, size: details.size, modifiedAt: details.mtimeMs };
     });
   }));
-  ipcMain.handle("cloud:freesound-preview", (_event: unknown, value: unknown) => safe<Uint8Array>(async () => {
+  handle("cloud:freesound-preview", (_event: unknown, value: unknown) => safe<Uint8Array>(async () => {
     const request = freesoundPreviewRequest(value);
     return withCloudOperation(request.operationId, 60_000, (signal) =>
       downloadFreesoundAudio(request.url, signal, () => undefined, 32 * 1024 * 1024));
   }));
-  ipcMain.handle("cloud:sfx-search", (_event: unknown, value: unknown) => safe<CloudSfxSearchItem[]>(async () => {
+  handle("cloud:sfx-search", (_event: unknown, value: unknown) => safe<CloudSfxSearchItem[]>(async () => {
     const request = cloudSfxSearchRequest(value);
     return withCloudOperation(request.operationId, 12_000, (signal) => searchCloudSfx(request.query, signal));
   }));
-  ipcMain.handle("cloud:sfx-preview", (_event: unknown, value: unknown) => safe<Uint8Array>(async () => {
+  handle("cloud:sfx-preview", (_event: unknown, value: unknown) => safe<Uint8Array>(async () => {
     const request = cloudSfxMediaRequest(value);
     return withCloudOperation(request.operationId, 12_000, (signal) => downloadCloudSfxAudio(request.sourceId, "preview", signal, 32 * 1024 * 1024));
   }));
-  ipcMain.handle("cloud:sfx-download", (_event: unknown, value: unknown) => safe<PreparedAudioFile>(async () => {
+  handle("cloud:sfx-download", (_event: unknown, value: unknown) => safe<PreparedAudioFile>(async () => {
     const request = cloudSfxMediaRequest(value, true);
     const context = await getHost().getProjectContext();
     const locations = await new ProjectStorage(getStorage().root).ensure(context);
@@ -427,14 +435,14 @@ export const registerIpcHandlers = (getHost: HostFactory, getLibrary: LibraryFac
       return { path: outputPath, projectRoot: locations.root, size: details.size, modifiedAt: details.mtimeMs };
     });
   }));
-  ipcMain.handle("cloud:cancel", (_event: unknown, value: unknown) => safe(async () => {
+  handle("cloud:cancel", (_event: unknown, value: unknown) => safe(async () => {
     const operationId = requireOperationId(value);
     const controller = cloudOperations.get(operationId);
     controller?.abort();
     return { cancelled: Boolean(controller) };
   }));
-  ipcMain.handle("library:get-snapshot", () => safe<LibrarySnapshot>(() => getLibrary().getSnapshot()));
-  ipcMain.handle("library:add-folder", (event: any) => safe<LibrarySnapshot | null>(async () => {
+  handle("library:get-snapshot", () => safe<LibrarySnapshot>(() => getLibrary().getSnapshot()));
+  handle("library:add-folder", (event: any) => safe<LibrarySnapshot | null>(async () => {
     const selection = await dialog.showOpenDialog({
       title: "Add sound library",
       buttonLabel: "Add folder",
@@ -444,7 +452,7 @@ export const registerIpcHandlers = (getHost: HostFactory, getLibrary: LibraryFac
     if (!selectedPath) return null;
     return getLibrary().addFolder(selectedPath, (progress) => event.sender.send("library:scan-progress", progress));
   }));
-  ipcMain.handle("library:choose-folder", () => safe<string | null>(async () => {
+  handle("library:choose-folder", () => safe<string | null>(async () => {
     const selection = await dialog.showOpenDialog({
       title: "Add sound library",
       buttonLabel: "Add folder",
@@ -452,33 +460,33 @@ export const registerIpcHandlers = (getHost: HostFactory, getLibrary: LibraryFac
     });
     return selection.canceled ? null : selection.filePaths[0] || null;
   }));
-  ipcMain.handle("library:scan-folder", (event: any, value: unknown) => safe<LibrarySnapshot>(() =>
+  handle("library:scan-folder", (event: any, value: unknown) => safe<LibrarySnapshot>(() =>
     getLibrary().addFolder(requireDirectoryPath(value),
       (progress) => event.sender.send("library:scan-progress", progress))));
-  ipcMain.handle("library:rescan", (event: any, value: unknown) => safe<LibrarySnapshot>(() =>
+  handle("library:rescan", (event: any, value: unknown) => safe<LibrarySnapshot>(() =>
     getLibrary().rescan(value === undefined ? undefined : requireId(value, "Folder ID"),
       (progress) => event.sender.send("library:scan-progress", progress))));
-  ipcMain.handle("library:remove-folder", (_event: unknown, value: unknown) =>
+  handle("library:remove-folder", (_event: unknown, value: unknown) =>
     safe<LibrarySnapshot>(() => getLibrary().removeFolder(requireId(value, "Folder ID"))));
-  ipcMain.handle("library:cancel-scan", () => safe(async () => ({ cancelled: getLibrary().cancelScan() })));
-  ipcMain.handle("library:set-sound-favorite", (_event: unknown, value: unknown) => safe<LibrarySnapshot>(() => {
+  handle("library:cancel-scan", () => safe(async () => ({ cancelled: getLibrary().cancelScan() })));
+  handle("library:set-sound-favorite", (_event: unknown, value: unknown) => safe<LibrarySnapshot>(() => {
     if (!value || typeof value !== "object") throw new ContractError("INVALID_LIBRARY_REQUEST", "Favorite request is invalid.");
     const request = value as { soundId?: unknown; favorite?: unknown };
     if (typeof request.favorite !== "boolean") throw new ContractError("INVALID_LIBRARY_REQUEST", "Favorite value is invalid.");
     return getLibrary().setSoundFavorite(requireId(request.soundId, "Sound ID"), request.favorite);
   }));
-  ipcMain.handle("library:set-folder-pinned", (_event: unknown, value: unknown) => safe<LibrarySnapshot>(() => {
+  handle("library:set-folder-pinned", (_event: unknown, value: unknown) => safe<LibrarySnapshot>(() => {
     if (!value || typeof value !== "object") throw new ContractError("INVALID_LIBRARY_REQUEST", "Pinned-folder request is invalid.");
     const request = value as { nodeId?: unknown; pinned?: unknown };
     if (typeof request.pinned !== "boolean") throw new ContractError("INVALID_LIBRARY_REQUEST", "Pinned value is invalid.");
     return getLibrary().setFolderPinned(requireId(request.nodeId, "Folder node ID"), request.pinned);
   }));
-  ipcMain.handle("library:set-sound-label", (_event: unknown, value: unknown) => safe<LibrarySnapshot>(() => {
+  handle("library:set-sound-label", (_event: unknown, value: unknown) => safe<LibrarySnapshot>(() => {
     if (!value || typeof value !== "object") throw new ContractError("INVALID_LIBRARY_REQUEST", "Sound-label request is invalid.");
     const request = value as { soundId?: unknown; labelColor?: unknown };
     return getLibrary().setSoundLabel(requireId(request.soundId, "Sound ID"), optionalLabel(request.labelColor));
   }));
-  ipcMain.handle("library:set-folder-label", (_event: unknown, value: unknown) => safe<LibrarySnapshot>(() => {
+  handle("library:set-folder-label", (_event: unknown, value: unknown) => safe<LibrarySnapshot>(() => {
     if (!value || typeof value !== "object") throw new ContractError("INVALID_LIBRARY_REQUEST", "Folder-label request is invalid.");
     const request = value as { nodeId?: unknown; labelColor?: unknown };
     return getLibrary().setFolderLabel(requireId(request.nodeId, "Folder node ID"), optionalLabel(request.labelColor));

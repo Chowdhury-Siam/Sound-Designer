@@ -12,14 +12,14 @@ try {
     const sounds="let sounds = $.tag($.state($.proxy(browserDemoSound ? [browserDemoSound] : [])), 'sounds');";
     const folders="let folders = $.tag($.state($.proxy([])), 'folders');";
     assert.ok(code.includes(sounds) && code.includes(folders));
-    const tree={id:"fixture-root",rootId:"fixture-root",name:"SFX Library",path:"/test/sfx",directFileCount:0,totalFileCount:10000,children:[{id:"fixture-child",rootId:"fixture-root",name:"Botanica • Granular & Interface Sounds",path:"/test/sfx/Botanica",directFileCount:10000,totalFileCount:10000,children:[]}]};
+    const tree={id:"fixture-root",rootId:"fixture-root",name:"SFX Library",path:"/test/sfx",directFileCount:0,totalFileCount:10000,children:[{id:"fixture-child",rootId:"fixture-root",name:"Botanica • Granular & Interface Sounds",path:"/test/sfx/Botanica",directFileCount:10000,totalFileCount:10000,children:[]},{id:"fixture-empty",rootId:"fixture-root",name:"Empty",path:"/test/sfx/Empty",directFileCount:0,totalFileCount:0,children:[]}]};
     code=code.replace(folders,`let folders = $.tag($.state($.proxy(${JSON.stringify([{id:tree.id,name:tree.name,path:tree.path,fileCount:10000,accent:"graphite",indexedAt:Date.now(),tree}])})), 'folders');`);
     code=code.replace(sounds,`let sounds = $.tag($.state($.proxy(browserDemoSound ? Array.from({length:10000},(_,i)=>({...browserDemoSound,id:'fixture-'+i,folderId:'fixture-root',directoryId:'fixture-child',name:'Granular, Button, Select — Long nested sound title ('+i+')',favorite:i<20,labelColor:i%2?'red':'orange'})) : [])), 'sounds');`);
     await route.fulfill({response,body:code});
   });
   await page.goto("http://127.0.0.1:3000/main/?demo");
   await page.getByRole("button",{name:"Keep library sidebar visible"}).click();
-  await page.locator('[data-library-node="fixture-root"] .library-tree-select').click();
+  await page.locator('[data-library-node*="fixture-root"] .library-tree-select').click();
   assert.match(await page.locator(".results-summary").textContent(),/10000/);
   await page.locator(".sound-row").first().click();
   assert.ok(await page.locator(".sound-row").count()<100,"Large library stays virtualized");

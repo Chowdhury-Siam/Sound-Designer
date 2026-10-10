@@ -28,7 +28,7 @@ User-scoped development CEP installs can shadow system installs; remove or reloc
 
 ## Host limitations
 
-- Resolve launches its own Electron application bundle. On Mac, assembly compiles a universal Intel/Apple Silicon `macos-menu.node` with Xcode Command Line Tools to set the in-process AppKit menu title to SoundDesigner after Electron installs its menu and on activation. Load status, actual runtime CPU and load errors are recorded in `~/Library/Application Support/SoundDesigner/macos-menu.log`. This does not rename or modify Resolve's bundle, signing metadata or Finder identity. Actual Resolve menu rendering still requires a Mac session; successful module loading or `app.setName()` alone is insufficient.
+- Resolve launches its own Electron application bundle, so the macOS application menu can show **Electron**. SoundDesigner's window title, rounded icon and menu actions remain branded. The experimental native menu helper was removed after Resolve rejected its different signing Team ID; no host bundle or security settings are modified. The PKG builder preserves the Resolve SDK module's vendor signature rather than re-signing it.
 - Adobe requires a saved project for prepared media and an active composition/timeline for insertion. Browser preview cannot certify host operations.
 - Resolve uses native project IDs; current non-WAV handoff prepares WAV even when shared Adobe conversion settings differ. Selected Fairlight-track placement and Edit fallback need real-host evidence.
 - Native drag can display a path-labelled target preview; no custom target label or Soundly-equivalent latency claim is made. Pending conversion can fall back to insertion; measure actual behavior per host.
@@ -36,6 +36,12 @@ User-scoped development CEP installs can shadow system installs; remove or reloc
 - Preview/processing codec support follows each embedded runtime's decoders. OGG/Opus/long-file playback must be tested to the actual end; indexing an extension does not establish decoding support.
 - Portable manifests use exclusive cross-host locks and verified copy/migration. Windows filesystem/mock tests pass; actual two-host concurrency, removable/read-only/case-sensitive volume handling and interrupted native operations remain BLOCKED.
 - Credentials share one machine-local plaintext user file. Moving the portable root to another machine does not transfer the key. Shared clearing persists and does not migrate a stale key back in.
+
+## Dependency security review
+
+The final pre-release audit removed the unused Babel 6 preset and refreshed compatible dependencies without migrating Svelte 5 or Vite 6 to another major version. The lockfile records the exact tested versions; release and CI builds must use `bun install --frozen-lockfile`.
+
+`bun audit` still reports one high-severity, build-time advisory: [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) in `braces@3.0.3`, reached through `fast-glob` in the CEP build toolchain. The advisory lists no patched version. The candidate payloads do not ship this build dependency, and the finding is not evidence of an installed audio-feature exploit. Do not build untrusted source or accept user-controlled build glob patterns. The advisory remains open for release risk review; it has not been suppressed or claimed fixed.
 
 ## macOS verification
 
@@ -53,7 +59,7 @@ bun run build:adobe && bun run build:resolve
 shasum -a 256 "$RESOLVE_WORKFLOW_NODE"
 ```
 
-Do not set `ALLOW_MISSING_NATIVE=1` for native acceptance. Before development installation, close Resolve, back up its existing plugin and inspect `resolve/scripts/install-dev.ts`: it replaces the plugin and removes the legacy-ID plugin. Obtain the required `/Library` write permission and preserve existing data.
+Do not set `ALLOW_MISSING_NATIVE=1` for native acceptance. Before development installation, close Resolve and inspect `resolve/scripts/install-dev.ts`. It stages the new copy first, retains the previous plugin outside the discovery directory and restores it if replacement fails. A legacy-ID plugin must be backed up and moved explicitly; it is never deleted automatically. Obtain the required `/Library` write permission and preserve existing data.
 
 Record native results separately for each architecture claimed:
 
@@ -64,5 +70,7 @@ Record native results separately for each architecture claimed:
 - Test native PKG Customize choices, receipts, permissions, clean installs, upgrades, rollback and preservation of the other target and user data. Complete signing, notarization, stapling and Gatekeeper checks before release.
 
 POSIX paths preserve case and literal backslashes; metadata identities use Unicode NFC. Older Adobe Mac project IDs used lowercase hashes, so the corrected identity may create a new generated-audio directory. Old directories remain intact; no automatic migration or deletion is performed.
+
+Resolve prepared-media directories now hash the complete native project ID to prevent different projects sharing one folder. This can create a new generated-media directory for an existing project; older media and timeline references remain untouched. Library scans reject stale commits when another host changes the index: refresh and retry rather than overwrite the other host's work.
 
 For rollback and receipt/signing requirements see [RELEASING.md](RELEASING.md#rollback-and-troubleshooting). Storage onboarding and source-preserving migration are documented in [README](README.md#shared-storage-onboarding-and-migration).

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { LABEL_COLORS, labelColorName, labelColorValue } from "../labels";
+  import { LABEL_COLORS, displayLabelColor, labelColorName, labelColorValue } from "../labels";
   import type { LabelColor } from "../types";
 
   let {
@@ -62,7 +62,7 @@
   {#if open}
     <div aria-label={label} class="color-label-popover" role="group" style:left={`${popoverX}px`} style:top={`${popoverY}px`}>
       {#each LABEL_COLORS as item (item.id)}
-        <button aria-label={`Set ${item.label} label`} aria-pressed={color === item.id} class:is-active={color === item.id} onclick={(event) => { event.stopPropagation(); onChange(item.id); open = false; }} type="button"><i style:background={item.value}></i></button>
+        <button aria-label={`Set ${item.label} label`} aria-pressed={displayLabelColor(color) === item.id} class:is-active={displayLabelColor(color) === item.id} onclick={(event) => { event.stopPropagation(); onChange(item.id); open = false; }} type="button"><i style:background={item.value}></i></button>
       {/each}
       {#if showEmpty}<button aria-label="Remove color label" aria-pressed={!color} class:is-active={!color} class="color-label-clear" onclick={(event) => { event.stopPropagation(); onChange(undefined); open = false; }} type="button">×</button>{/if}
     </div>

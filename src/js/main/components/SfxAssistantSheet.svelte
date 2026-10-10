@@ -230,7 +230,7 @@
               {#each analysis.moments as moment, index}
                 {@const choices = choicesByMoment[index] || []}
                 {@const chosen = availableSounds.find(sound => sound.id === selectedIds[index])}
-                <article class:disabled={disabled[index]} class="sfx-moment">
+                <article class:disabled={disabled[index]} class:is-approved={Boolean(chosen) && !disabled[index]} class="sfx-moment">
                   <input aria-label={`Include suggestion at ${moment.time.toFixed(2)} seconds`} type="checkbox" checked={!disabled[index]} onchange={(event) => disabled[index] = !event.currentTarget.checked} />
                   <div class="sfx-moment-main">
                     <div class="sfx-moment-title"><b>{moment.time.toFixed(2)}s</b><span>{moment.type}</span><small title={moment.reason}>{moment.layer}</small></div>
@@ -242,7 +242,7 @@
                           {#each choices as choice}<option value={choice.id}>{choice.source === "scorpion" ? "☁ " : ""}{choice.name}</option>{/each}
                         </select>
                         {#if chosen?.source === "scorpion"}<span class="sfx-cloud-indicator" title="Cloud sound"><Icon name="cloud" size={14} /></span>{/if}
-                        <button class="sfx-icon-button" type="button" title={previewId === selectedIds[index] ? "Stop preview" : "Preview selected sound"} aria-label={`Preview sound for ${moment.type}`} disabled={!selectedIds[index]} onclick={() => { const sound = availableSounds.find(item => item.id === selectedIds[index]); if (sound) preview(sound); }}><Icon name={previewId === selectedIds[index] ? "stop" : "play"} size={14} /></button>
+                        <button class="sfx-icon-button" class:is-playing={Boolean(previewId) && previewId === selectedIds[index]} aria-pressed={Boolean(previewId) && previewId === selectedIds[index]} type="button" title={previewId === selectedIds[index] ? "Stop preview" : "Preview selected sound"} aria-label={`Preview sound for ${moment.type}`} disabled={!selectedIds[index]} onclick={() => { const sound = availableSounds.find(item => item.id === selectedIds[index]); if (sound) preview(sound); }}><Icon name={previewId === selectedIds[index] ? "stop" : "play"} size={14} /></button>
                       </div>
                     {:else}<small class="sfx-no-match">No indexed {moment.type} sounds. Import a matching folder or disable this moment.</small>{/if}
                   </div>

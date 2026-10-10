@@ -117,7 +117,7 @@ const downloadFile = (
     reject(new Error("Freesound returned an untrusted download address."));
     return;
   }
-  const temporaryPath = `${destination}.part`;
+  const temporaryPath = `${destination}.${crypto.randomBytes(8).toString("hex")}.part`;
   let settled = false;
   let received = 0;
   let lastProgressAt = 0;
@@ -182,7 +182,6 @@ const downloadFile = (
         if (settled) return;
         try {
           if (!received) throw new Error("Freesound returned an empty audio file.");
-          if (fs.existsSync(destination)) fs.unlinkSync(destination);
           fs.renameSync(temporaryPath, destination);
           onProgress?.(1);
           settled = true;
@@ -270,10 +269,11 @@ const writeFileAsync = (filePath: string, bytes: Uint8Array) => new Promise<void
 });
 
 const writeJsonAtomically = (filePath: string, value: unknown) => {
-  const temporary = `${filePath}.tmp`;
-  fs.writeFileSync(temporary, JSON.stringify(value, null, 2), "utf8");
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  fs.renameSync(temporary, filePath);
+  const temporary = `${filePath}.${crypto.randomBytes(8).toString("hex")}.tmp`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(value, null, 2), "utf8");
+    fs.renameSync(temporary, filePath);
+  } finally { try { fs.unlinkSync(temporary); } catch (_error) {} }
 };
 
 const fileFingerprint = (sound: SoundFile, sourcePath: string, policy: AudioConversionPolicy, normalization: AudioNormalization, normalizationTargetDb: number, processing?: AudioProcessingSettings) => {
@@ -458,7 +458,7 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
     const suffix = options.normalization !== "preserve" ? `-norm-${Math.abs(targetDb).toFixed(1).replace(".", "p")}db` : "";
     preparedPath = path.join(hasAudioProcessing(options.processing) ? directories.processed : directories.converted, `${safeName(sound.sourceId || sound.id, "sound")}-${safeName(sound.name, "audio")}-${fingerprint}${suffix}.wav`);
     if (!fs.existsSync(preparedPath)) {
-      const temporary = `${preparedPath}.part`;
+      const temporary = `${preparedPath}.${crypto.randomBytes(8).toString("hex")}.part`;
       try {
         const decoded = await decodeAudio(workingPath, options.signal);
         if (options.signal?.aborted) throw new DOMException("Audio preparation was cancelled.", "AbortError");
@@ -466,7 +466,6 @@ export const prepareAudioForHost = async (sound: SoundFile, options: PrepareAudi
         gainDb = encoded.gainDb;
         preparedDuration = encoded.duration;
         await writeFileAsync(temporary, encoded.bytes);
-        if (fs.existsSync(preparedPath)) fs.unlinkSync(preparedPath);
         fs.renameSync(temporary, preparedPath);
       } catch (error) {
         try { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); } catch (_cleanupError) {}
@@ -604,11 +603,10 @@ export const prepareAudioSegmentForHost = async (
   const outputPath = path.join(directories.segments, `${baseName}.wav`);
 
   if (!fs.existsSync(outputPath)) {
-    const temporary = `${outputPath}.part`;
+    const temporary = `${outputPath}.${crypto.randomBytes(8).toString("hex")}.part`;
     try {
       const encoded = await encodePcm24Wave(decoded, options.normalization, options.processing, options.signal, startFrame, endFrame, options.normalizationTargetDb);
       await writeFileAsync(temporary, encoded.bytes);
-      if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
       fs.renameSync(temporary, outputPath);
     } catch (error) {
       try { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); } catch (_cleanupError) {}

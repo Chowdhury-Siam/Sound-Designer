@@ -97,6 +97,7 @@ const sfxKind = (value: string, duration: number): ResolveSfxKind => {
 
 export class NativeResolveHost implements ResolveHostAdapter {
   private initialized = false;
+  private initializing: Promise<void> | null = null;
   private resolve: NativeProxy | null = null;
   private mutationTail: Promise<void> = Promise.resolve();
 
@@ -107,6 +108,12 @@ export class NativeResolveHost implements ResolveHostAdapter {
 
   async initialize(): Promise<void> {
     if (this.initialized && this.resolve) return;
+    const pending = this.initializing ?? (this.initializing = this.initializeNative());
+    try { await pending; }
+    finally { if (this.initializing === pending) this.initializing = null; }
+  }
+
+  private async initializeNative(): Promise<void> {
     const initialize: ((pluginId: string) => boolean | Promise<boolean>) | undefined = this.workflow.InitializePromise ?? this.workflow.Initialize;
     const getResolve = this.workflow.GetResolvePromise ?? this.workflow.GetResolve;
     if (typeof initialize !== "function" || typeof getResolve !== "function") {
@@ -122,6 +129,7 @@ export class NativeResolveHost implements ResolveHostAdapter {
   }
 
   async cleanup(): Promise<void> {
+    await this.initializing?.catch(() => undefined);
     await this.mutationTail.catch(() => undefined);
     if (this.initialized) this.workflow.CleanUp();
     this.resolve = null;
@@ -174,10 +182,20 @@ export class NativeResolveHost implements ResolveHostAdapter {
     }
   }
 
-  private assertRequestedProject(requestedProjectId: string | undefined, current: ResolveContext): void {
+  private assertRequestedProject(requestedProjectId: string | undefined, current: Pick<ResolveContext, "projectId">): void {
     if (requestedProjectId && requestedProjectId !== current.projectId) {
       throw new ResolveHostError("CONTEXT_CHANGED", "The active Resolve project changed before the operation started.");
     }
+  }
+
+  private async dragContext(): Promise<{ project: NativeProxy; context: Pick<ResolveContext, "projectId" | "timelineId"> }> {
+    const { project, timeline } = await this.projectAndTimeline();
+    const projectId = await project.GetUniqueId();
+    if (!projectId) throw new ResolveHostError("INVALID_PROJECT_CONTEXT", "Resolve returned an incomplete project context.");
+    return {
+      project,
+      context: { projectId: String(projectId), timelineId: timeline ? String((await timeline.GetUniqueId()) || "") : undefined },
+    };
   }
 
   private async ensureBin(project: NativeProxy): Promise<{ folder: NativeProxy; result: ResolveBin }> {
@@ -293,6 +311,17 @@ export class NativeResolveHost implements ResolveHostAdapter {
 
   async importPreparedAudio(request: ImportAudioRequest, forDrag = false): Promise<ImportedAudio> {
     return this.enqueueMutation(async () => {
+      if (forDrag) {
+        // Drag needs identity guards, not names, page or playhead queries.
+        const { project, context: expected } = await this.dragContext();
+        this.assertRequestedProject(request.projectId, expected);
+        const { result } = await this.importInsideMutation(project, request, true);
+        const { context: current } = await this.dragContext();
+        if (current.projectId !== expected.projectId || current.timelineId !== expected.timelineId) {
+          throw new ResolveHostError("CONTEXT_CHANGED", "The active Resolve project or timeline changed during the operation.");
+        }
+        return result;
+      }
       const expected = await this.getProjectContext();
       this.assertRequestedProject(request.projectId, expected);
       const { project } = await this.projectAndTimeline();

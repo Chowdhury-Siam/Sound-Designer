@@ -40,14 +40,19 @@ try {
   await page.getByRole("button", {name: "Disable hover audition", exact: true}).click();
   await page.keyboard.press("Escape");
   await page.getByRole("button", {name: "Add to favorites", exact: true}).click();
-  await page.getByLabel("New favorite subfolder").fill("Whoosh");
-  await page.getByRole("button", {name: "Create inside selected destination"}).click();
-  await page.getByLabel("New favorite subfolder").fill("Soft");
-  await page.getByRole("button", {name: "Create inside selected destination"}).click();
+  await page.getByLabel("New subfolder", {exact: true}).fill("Whoosh");
+  await page.getByRole("button", {name: "Create subfolder inside selected destination"}).click();
+  await page.getByLabel("New subfolder", {exact: true}).fill("Soft");
+  await page.getByRole("button", {name: "Create subfolder inside selected destination"}).click();
   await page.getByRole("button", {name: "Add favorite", exact: true}).click();
   await page.getByRole("button", {name: "Expand Favorites collections"}).click();
   await page.getByRole("button", {name: "Expand Whoosh collection"}).click();
   assert.equal(await page.locator(".favorite-library-row", {hasText: "Soft"}).count(), 1);
+  for (const label of ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Gray"]) {
+    await page.locator(".sound-row").click({button: "right"});
+    await page.getByRole("button", {name: `Set ${label} label`, exact: true}).click();
+    assert.match(await page.locator(".sound-row").getAttribute("class"), new RegExp(`\\blabel-${label.toLowerCase()}\\b`), `Favorite uses ${label} label`);
+  }
   await page.getByRole("button", {name: "Audio effects", exact: true}).click();
   await page.getByRole("button", {name: "Normalize −1 dB"}).click();
   await page.getByLabel("Echo amount").fill("0.2");

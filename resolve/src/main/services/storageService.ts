@@ -1,6 +1,7 @@
 import path from "node:path";
 import { cp, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { ResolveHostError } from "./resolveHost";
+import { isStorageLockOwnerAlive } from "../../../../src/js/platform/storageLock";
 
 type Manifest = {
   version: 2;
@@ -93,8 +94,13 @@ export class StorageService {
     return (await this.readManifest()).library as T | undefined;
   }
 
-  async writeLibrary(value: unknown): Promise<void> {
-    await this.updateManifest((manifest) => { manifest.library = value; });
+  async writeLibrary(value: unknown, expected?: string): Promise<void> {
+    await this.updateManifest((manifest) => {
+      if (expected !== undefined && JSON.stringify(manifest.library ?? null) !== expected) {
+        throw new ResolveHostError("LIBRARY_CHANGED", "The sound library changed in another window. Refresh it and retry this operation.");
+      }
+      manifest.library = value;
+    });
   }
 
   async readPreferences<T>(): Promise<T | undefined> {
@@ -251,7 +257,8 @@ export class StorageService {
         const code = error && typeof error === "object" && "code" in error ? String((error as { code: unknown }).code) : "";
         if (code !== "EEXIST") throw error;
         const details = await stat(lockPath).catch(() => null);
-        if (details && Date.now() - details.mtimeMs > lockStaleMs) {
+        const owner = details ? await readFile(lockPath, "utf8").catch(() => undefined) : undefined;
+        if (details && owner !== undefined && Date.now() - details.mtimeMs > lockStaleMs && !isStorageLockOwnerAlive(owner)) {
           const confirmation = await stat(lockPath).catch(() => null);
           if (confirmation?.mtimeMs === details.mtimeMs) await rm(lockPath, { force: true });
           continue;
@@ -270,13 +277,12 @@ export class StorageService {
   }
 
   private async writeJson(filePath: string, value: unknown): Promise<void> {
-    const temporaryPath = `${filePath}.tmp-${process.pid}`;
-    await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    const temporaryPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     try {
+      await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
       await rename(temporaryPath, filePath);
-    } catch {
-      await rm(filePath, { force: true });
-      await rename(temporaryPath, filePath);
+    } finally {
+      await rm(temporaryPath, { force: true }).catch(() => undefined);
     }
   }
 }

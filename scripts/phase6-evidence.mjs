@@ -27,6 +27,7 @@ check("resolve-candidate-build", "bun", ["run", "build:resolve"]);
 check("artifact-negative-tests", "bun", ["run", "test:artifact-audit"]);
 check("audio", "bun", ["run", "test:audio"]);
 check("search-tabs", "bun", ["run", "test:search-tabs"]);
+check("release-safety", "bun", ["run", "test:release-safety"]);
 check("installers", "bun", ["run", "test:installers"]);
 check("workflow-yaml", "python", ["-c", "import yaml; w=yaml.safe_load(open('.github/workflows/main.yml', encoding='utf-8')); assert w['permissions']=={'contents':'read'}; assert set(w['jobs'])=={'shared-static','adobe-build','resolve-build','windows-installer','macos-installer','artifact-audit','native-certification'}; assert set(w['jobs']['shared-static']['strategy']['matrix']['os'])=={'windows-latest','macos-latest','ubuntu-latest'}; print('PASS workflow YAML parsing, read-only permission and seven job boundaries; not a remote Actions run')"], "BLOCKED");
 check("candidate-payload-audit", "bun", ["run", "audit:artifacts"]);

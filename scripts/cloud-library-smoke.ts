@@ -42,4 +42,11 @@ await assert.rejects(
   /403/,
   "An empty Freesound response must not mask Cloud SFX failure",
 );
+let cancelled = false;
+globalThis.fetch = (async () => new Response(new ReadableStream({
+  pull(controller) { controller.enqueue(new Uint8Array(1024 * 1024)); },
+  cancel() { cancelled = true; },
+}))) as typeof fetch;
+await assert.rejects(cloud.searchCloudLibrary("oversized"), /too large/);
+assert.equal(cancelled, true, "Oversized chunked cloud responses must stop reading");
 console.log("Cloud library smoke test passed.");

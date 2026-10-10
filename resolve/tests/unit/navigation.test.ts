@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+import { AUDIO_INPUT_EXTENSIONS } from "../../src/shared/audioFormats";
 import { isSupportedMediaPath, resolveMediaRange, resolveUiAssetPath } from "../../src/main/uiProtocol";
 
 describe("packaged renderer navigation allowlist", () => {
@@ -18,10 +19,16 @@ describe("packaged renderer navigation allowlist", () => {
     expect(resolveUiAssetPath("sounddesigner:////app/assets/index.js", root)).toBe(path.join(root, "assets", "index.js"));
     expect(resolveUiAssetPath("sounddesigner://app/%2e%2e%5coutside.txt", root)).toBeNull();
     expect(resolveUiAssetPath("https://example.com/index.html", root)).toBeNull();
+    expect(resolveUiAssetPath("sounddesigner://app/%broken", root)).toBeNull();
+    expect(resolveUiAssetPath("not a URL", root)).toBeNull();
+    expect(resolveUiAssetPath("sounddesigner://untrusted/index.html", root)).toBeNull();
   });
 });
 
 describe("local media byte ranges", () => {
+  test("every indexed input format can reach waveform and FX preparation", () => {
+    for (const extension of AUDIO_INPUT_EXTENSIONS) expect(isSupportedMediaPath(path.resolve("Audio", `sound.${extension}`))).toBe(true);
+  });
   test("allows only absolute audio paths on the media origin", () => {
     expect(isSupportedMediaPath(path.resolve("Audio", "hit.WAV"))).toBe(true);
     expect(isSupportedMediaPath(path.resolve("Users", "person", "private.png"))).toBe(false);
@@ -37,6 +44,8 @@ describe("local media byte ranges", () => {
   test("rejects ranges outside the media file", () => {
     expect(resolveMediaRange("bytes=1000-", 1000)).toBeNull();
     expect(resolveMediaRange("not-a-range", 1000)).toBeNull();
+    expect(resolveMediaRange("bytes=-", 1000)).toBeNull();
+    expect(resolveMediaRange("bytes=-9007199254740992", 1000)).toBeNull();
   });
 
   test("bounds open-ended streaming reads without changing the requested start", () => {

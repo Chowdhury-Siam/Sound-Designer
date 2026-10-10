@@ -101,9 +101,10 @@ const requestJsonWithNode = (url: string, apiKey: string, signal?: AbortSignal):
         if (statusCode === 429) return finishError(new Error("Freesound request limit reached. Please try again later."));
         if (statusCode < 200 || statusCode >= 300) return finishError(new Error(`Freesound search failed (HTTP ${statusCode}).`));
         try {
+          const parsed = JSON.parse(body);
           settled = true;
           cleanupSignal();
-          resolve(JSON.parse(body));
+          resolve(parsed);
         } catch (_error) {
           finishError(new Error("Freesound returned an invalid response."));
         }

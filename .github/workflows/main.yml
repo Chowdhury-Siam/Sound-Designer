@@ -33,6 +33,7 @@ jobs:
       - run: bun run test:resolve
       - run: bun run test:audio
       - run: bun run test:search-tabs
+      - run: bun run test:release-safety
       - run: bun run test:artifact-audit
       - run: bun run test:installers
 

@@ -43,11 +43,8 @@ for (const target of ["adobe", "resolve"]) {
   await checkLinks(files);
   run("bun", ["scripts/artifact-audit.ts", `--${target}`, files]);
   if (target === "resolve" && !candidate) {
-    for (const name of ["WorkflowIntegration.node", "macos-menu.node"]) {
-      const addon = path.join(files, name);
-      if (process.env.SOUNDDESIGNER_MAC_CODE_IDENTITY) run("/usr/bin/codesign", ["--force", "--timestamp", "--options", "runtime", "--sign", process.env.SOUNDDESIGNER_MAC_CODE_IDENTITY, addon]);
-      run("/usr/bin/codesign", ["--verify", "--strict", addon]);
-    }
+    // Preserve the SDK signature required by Resolve's library validation.
+    run("/usr/bin/codesign", ["--verify", "--strict", path.join(files, "WorkflowIntegration.node")]);
   }
   const runtimeArch = (process.env.RESOLVE_TARGET_ARCH || process.arch) === "arm64" ? "arm64" : "x86_64";
   for (const phase of ["preinstall", "postinstall"]) {
@@ -63,7 +60,7 @@ await writeFile(path.join(work, "Distribution.xml"), distributionXml(version));
 const args = ["--distribution", path.join(work, "Distribution.xml"), "--package-path", work, "--resources", resources];
 if (!candidate) {
   if (process.env.SOUNDDESIGNER_SIGNING_APPROVED !== "1" || !process.env.SOUNDDESIGNER_MAC_INSTALLER_IDENTITY || !process.env.SOUNDDESIGNER_MAC_NOTARY_PROFILE) throw new Error("Separate signing approval, Developer ID Installer identity and notarization profile are required.");
-  for (const name of ["WorkflowIntegration.node", "macos-menu.node"]) run("/usr/bin/codesign", ["--verify", "--strict", path.join(work, "resolve", "payload", name)]);
+  run("/usr/bin/codesign", ["--verify", "--strict", path.join(work, "resolve", "payload", "WorkflowIntegration.node")]);
   args.push("--sign", process.env.SOUNDDESIGNER_MAC_INSTALLER_IDENTITY);
 }
 run("/usr/bin/productbuild", [...args, output]);

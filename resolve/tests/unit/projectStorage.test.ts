@@ -15,6 +15,12 @@ describe("project storage identity", () => {
     expect(sanitizeProjectName("  বাংলা / Film:*?  ")).toBe("বাংলা - Film-");
   });
 
+  test("keeps full project identities distinct even with a shared prefix or punctuation", () => {
+    const names = ["abcdefghijkl-project-one", "abcdefghijkl-project-two", "AB-C", "A-BC"]
+      .map(projectId => projectDirectoryName({ projectName: "Film", projectId }));
+    expect(new Set(names).size).toBe(names.length);
+  });
+
   test("creates every prepared-audio destination including segments", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "sounddesigner-storage-"));
     try {

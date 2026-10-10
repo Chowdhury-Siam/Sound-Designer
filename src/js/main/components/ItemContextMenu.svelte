@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { LABEL_COLORS, labelColorName } from "../labels";
+  import { LABEL_COLORS, displayLabelColor, labelColorName } from "../labels";
   import type { LabelColor } from "../types";
   import Icon from "./Icon.svelte";
 
@@ -65,8 +65,8 @@
       {#each LABEL_COLORS as item (item.id)}
         <button
           aria-label={`Set ${item.label} label`}
-          aria-pressed={color === item.id}
-          class:is-active={color === item.id}
+          aria-pressed={displayLabelColor(color) === item.id}
+          class:is-active={displayLabelColor(color) === item.id}
           onclick={() => chooseColor(item.id)}
           title={`${item.label} label`}
           type="button"

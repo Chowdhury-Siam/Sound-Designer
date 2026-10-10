@@ -5,7 +5,10 @@ import { readFileSync } from "node:fs";
 const source = readFileSync(new URL("../src/js/main/App.svelte", import.meta.url), "utf8");
 const body = source.split("let localVisibleSounds = $derived.by(() => {")[1]?.split("\n  });")[0];
 assert.ok(body, "Local result filter must be present");
-const filterSounds = new Function("sounds", "localSourceEnabled", "activeTab", "selectedFolder", "selectedDirectoryIds", "filter", "labelFilter", "soundSearchText", "favoriteCollection", body);
+const tokens = source.match(/let queryTokens = \$derived\((.*)\);/)?.[1];
+assert.ok(tokens, "Shared query tokenization must be present");
+const tokenize = new Function("activeTab", `return ${tokens};`);
+const filterSounds = new Function("sounds", "localSourceEnabled", "activeTab", "selectedFolder", "selectedDirectoryIds", "filter", "labelFilter", "soundSearchText", "favoriteCollection", "queryTokens", body);
 const sounds = [
   { id: "a", directoryId: "one", favorite: true, name: "Click", tags: [], duration: 1 },
   { id: "b", directoryId: "two", favorite: true, name: "Whoosh", tags: [], duration: 2 },
@@ -13,7 +16,7 @@ const sounds = [
 ];
 const results = (folder, filter, query = "", collection = "all") => filterSounds(
   sounds, true, { query }, folder, new Set([folder]), filter, undefined,
-  sound => sound.name.toLowerCase(), collection,
+  sound => sound.name.toLowerCase(), collection, tokenize({ query }),
 ).map(sound => sound.id);
 for (const folder of ["one", "two", "all", "missing"]) {
   assert.deepEqual(results(folder, "favorites"), ["a", "b"], `Favorites must ignore folder ${folder}`);

@@ -278,6 +278,7 @@
         {progress}
         {zoom}
         reversed={reversed && !selection}
+        selectionRange={selection && visibleSelection && visibleSelection.right > visibleSelection.left ? visibleSelection : null}
         reverseRange={reversed && selection && duration > 0 ? { start: selection.start / duration, end: selection.end / duration } : null}
         channelCountHint={sound?.channels || 0}
         showModeControls={Boolean(sound)}

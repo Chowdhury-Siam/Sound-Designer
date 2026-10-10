@@ -37,6 +37,7 @@
   let chainLabel = $derived(chain.map((part) => part.name).join(" / "));
   let visibleChildren = $derived(tail.children.filter((child) => treeMatchesQuery(child, filterQuery)));
   let hasChildren = $derived(visibleChildren.length > 0);
+  let folderCountLabel = $derived(`${visibleChildren.length} ${filterQuery ? "matching " : ""}subfolder${visibleChildren.length === 1 ? "" : "s"}`);
   let expanded = $derived(filterQuery.length > 0 || expandedIds.has(tail.id));
   let contextOpen = $state(false);
   let contextX = $state(0);
@@ -58,6 +59,7 @@
     class:is-selected={chain.some((part) => part.id === selectedId)}
     class:is-root={depth === 0}
     class:is-branch-open={hasChildren && expanded}
+    class:has-subfolders={hasChildren}
     class:is-leaf={!hasChildren}
     oncontextmenu={openContextMenu}
     role="group"
@@ -74,12 +76,23 @@
       type="button"
     ><Icon name="chevron" size={12} /></button>
     <button class="library-tree-select tooltip" data-tooltip={`${tail.path} · ${tail.directFileCount} direct sounds · ${tail.totalFileCount} including subfolders${meta ? ` · ${meta}` : ""}`} onclick={() => onSelect(tail.id)} type="button">
-      <span class="library-icon"><Icon name="folder" size={14} /></span>
+      <span class="library-icon"><Icon name={hasChildren ? "folderStack" : "folder"} size={14} /></span>
       <span class="library-copy">
         <strong>{#each chain as part, index (part.id)}{#if index}<span class="tree-chain-sep">/</span>{/if}{part.name}{/each}</strong>
       </span>
       <span class="count-badge" aria-label={`${tail.totalFileCount} sounds including subfolders`}>{tail.totalFileCount}</span>
     </button>
+    {#if hasChildren}
+      {#if filterQuery}
+        <span class="tree-folder-toggle tooltip" data-tooltip={folderCountLabel} aria-label={folderCountLabel}>
+          <Icon name="folderStack" size={12} /><span>{visibleChildren.length}</span><span class="tree-folder-label">{visibleChildren.length === 1 ? "folder" : "folders"}</span>
+        </span>
+      {:else}
+        <button class="tree-folder-toggle tooltip" class:is-expanded={expanded} data-tooltip={`${folderCountLabel} · ${expanded ? "Collapse" : "Expand"}`} aria-label={`${expanded ? "Collapse" : "Expand"} ${folderCountLabel} in ${chainLabel}`} aria-expanded={expanded} onclick={() => onToggle(tail.id)} type="button">
+          <Icon name="folderStack" size={12} /><span>{visibleChildren.length}</span><span class="tree-folder-label">{visibleChildren.length === 1 ? "folder" : "folders"}</span>
+        </button>
+      {/if}
+    {/if}
   </div>
   <ItemContextMenu
     open={contextOpen}

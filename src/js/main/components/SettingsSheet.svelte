@@ -165,11 +165,11 @@
           <div class="settings-group">
             <span class="field-label">Audio storage</span>
             <div class="choice-list" role="radiogroup" aria-label="Audio storage">
-              <label class="choice-row" class:storage-disabled={!projectStorageAvailable}>
+              <label class="choice-row" class:is-selected={draftAudioStorageMode === "project"} class:storage-disabled={!projectStorageAvailable}>
                 <input bind:group={draftAudioStorageMode} value="project" disabled={!projectStorageAvailable || storageBusy} name="audio-storage" onchange={() => selectAudioStorageMode("project")} type="radio" />
                 <span><strong>Beside project</strong><small>{projectStorageAvailable ? "Keep audio in a SoundDesigner folder beside your saved project." : "DaVinci Resolve requires a central audio folder."}</small></span>
               </label>
-              <label class="choice-row">
+              <label class="choice-row" class:is-selected={draftAudioStorageMode === "central"}>
                 <input bind:group={draftAudioStorageMode} value="central" disabled={storageBusy} name="audio-storage" onchange={() => selectAudioStorageMode("central")} type="radio" />
                 <span><strong>Central folder</strong><small>Keep audio for all projects in one chosen SoundDesigner folder.</small></span>
               </label>
@@ -207,15 +207,15 @@
         <div class="settings-group">
           <span class="field-label">Adobe compatibility</span>
           <div class="choice-list" role="radiogroup" aria-label="Audio conversion behavior">
-            <label class="choice-row">
+            <label class="choice-row" class:is-selected={draftConversionPolicy === "unsupported"}>
               <input checked={draftConversionPolicy === "unsupported"} name="conversion-policy" onchange={() => draftConversionPolicy = "unsupported"} type="radio" />
               <span><strong>Convert unsupported audio to WAV</strong><small>Recommended · prepares FLAC, OGG, Opus and other incompatible audio only when used.</small></span>
             </label>
-            <label class="choice-row">
+            <label class="choice-row" class:is-selected={draftConversionPolicy === "always"}>
               <input checked={draftConversionPolicy === "always"} name="conversion-policy" onchange={() => draftConversionPolicy = "always"} type="radio" />
               <span><strong>Always convert imported audio to WAV</strong><small>Creates a consistent 24-bit PCM WAV copy for every inserted sound.</small></span>
             </label>
-            <label class="choice-row">
+            <label class="choice-row" class:is-selected={draftConversionPolicy === "never"}>
               <input checked={draftConversionPolicy === "never"} name="conversion-policy" onchange={() => draftConversionPolicy = "never"} type="radio" />
               <span><strong>Never convert automatically</strong><small>Adobe may reject unsupported containers or codecs.</small></span>
             </label>
@@ -224,15 +224,15 @@
         <div class="settings-group">
           <span class="field-label">Normalization</span>
           <div class="choice-list" role="radiogroup" aria-label="Audio normalization behavior">
-            <label class="choice-row">
+            <label class="choice-row" class:is-selected={draftNormalization === "preserve"}>
               <input checked={draftNormalization === "preserve"} name="normalization" onchange={() => draftNormalization = "preserve"} type="radio" />
               <span><strong>Preserve original level</strong><small>Recommended · keeps the sound designer's intended dynamics.</small></span>
             </label>
-            <label class="choice-row">
+            <label class="choice-row" class:is-selected={draftNormalization === "peak-minus-one"}>
               <input checked={draftNormalization === "peak-minus-one"} name="normalization" onchange={() => draftNormalization = "peak-minus-one"} type="radio" />
               <span><strong>Peak normalize to −1 dBFS</strong><small>Creates a non-destructive WAV and applies one gain value across every channel.</small></span>
             </label>
-            <label class="choice-row">
+            <label class="choice-row" class:is-selected={draftNormalization === "manual"}>
               <input checked={draftNormalization === "manual"} name="normalization" onchange={() => draftNormalization = "manual"} type="radio" />
               <span><strong>Manual peak target</strong><small>Choose the peak level applied when audio is inserted into the timeline.</small></span>
             </label>

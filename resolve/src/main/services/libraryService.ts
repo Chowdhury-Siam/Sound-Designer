@@ -10,12 +10,8 @@ import type {
 } from "../../shared/types";
 import { ResolveHostError } from "./resolveHost";
 import type { StorageService } from "./storageService";
+import { AUDIO_INPUT_EXTENSIONS } from "../../shared/audioFormats";
 
-const AUDIO_EXTENSIONS = new Set([
-  "3g2", "3gp", "aac", "ac3", "adts", "aif", "aiff", "amr", "ape", "au", "bwf", "caf", "dts",
-  "flac", "m4a", "m4b", "m4r", "mka", "mp2", "mp3", "mpa", "mpc", "oga", "ogg", "opus", "ra",
-  "ram", "snd", "spx", "tak", "tta", "voc", "wav", "weba", "webm", "wma", "wv",
-]);
 
 type SoundMetadata = { favorite?: boolean; labelColor?: LibrarySound["labelColor"] };
 type FolderMetadata = { pinned?: boolean; labelColor?: LibraryTreeNode["labelColor"] };
@@ -101,9 +97,17 @@ const assertNotAborted = (signal: AbortSignal): void => {
 export class LibraryService {
   private document: LibraryDocument = emptyDocument();
   private loaded = false;
+  private baseline = "null";
+  private operations: Promise<unknown> = Promise.resolve();
   private scanController: AbortController | null = null;
 
   constructor(private readonly storage: StorageService) {}
+
+  private exclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = this.operations.then(operation);
+    this.operations = pending.catch(() => {});
+    return pending;
+  }
 
   private async load(force = false): Promise<void> {
     if (this.loaded && !force) return;
@@ -111,8 +115,9 @@ export class LibraryService {
     this.document = emptyDocument();
     try {
       const parsed = await this.storage.readLibrary<Partial<LibraryDocument>>();
+      this.baseline = JSON.stringify(parsed ?? null);
       if (!parsed) return;
-      if (parsed.version !== 1 || !parsed.snapshot) return;
+      if (parsed.version !== 1 || !parsed.snapshot) throw new ResolveHostError("LIBRARY_INDEX_INVALID", "The SoundDesigner library index is invalid. Restore a valid backup before changing it.");
       this.document = {
         version: 1,
         snapshot: {
@@ -123,13 +128,16 @@ export class LibraryService {
         soundMetadata: Object.fromEntries(Object.entries(parsed.soundMetadata || {}).map(([key, entry]) => [nativeKey(key), entry])),
         folderMetadata: Object.fromEntries(Object.entries(parsed.folderMetadata || {}).map(([key, entry]) => [nativeKey(key), entry])),
       };
-    } catch {
-      this.document = emptyDocument();
+    } catch (error) {
+      this.loaded = false;
+      throw error;
     }
   }
 
   private async save(): Promise<void> {
-    await this.storage.writeLibrary(this.document);
+    const serialized = JSON.stringify(this.document);
+    await this.storage.writeLibrary(this.document, this.baseline);
+    this.baseline = serialized;
   }
 
   private hydrateMetadata(folder: LibraryFolder, sounds: LibrarySound[]): void {
@@ -185,7 +193,9 @@ export class LibraryService {
         throw new ResolveHostError("LIBRARY_TOO_LARGE", "The library contains too many linked directories to scan safely.");
       }
 
-      const entries = await readdir(current.directoryPath, { withFileTypes: true }).catch(() => []);
+      const entries = await readdir(current.directoryPath, { withFileTypes: true }).catch(() => {
+        throw new ResolveHostError("LIBRARY_FOLDER_UNAVAILABLE", "A library folder could not be read. The previous index has been preserved; check the disk and folder permissions before rescanning.");
+      });
       for (const entry of entries) {
         assertNotAborted(signal);
         const entryPath = path.join(current.directoryPath, entry.name);
@@ -203,7 +213,7 @@ export class LibraryService {
           queue.push({ directoryPath: entryPath, node: child });
         } else if (isFile) {
           const extension = extensionFromPath(entryPath);
-          if (!AUDIO_EXTENSIONS.has(extension)) continue;
+          if (!AUDIO_INPUT_EXTENSIONS.has(extension)) continue;
           details ??= await stat(entryPath).catch(() => null);
           const name = path.basename(entry.name, path.extname(entry.name));
           const sound: LibrarySound = {
@@ -248,8 +258,10 @@ export class LibraryService {
   }
 
   async getSnapshot(): Promise<LibrarySnapshot> {
-    await this.load(this.scanController === null);
-    return structuredClone(this.document.snapshot);
+    return this.exclusive(async () => {
+      await this.load(this.scanController === null);
+      return structuredClone(this.document.snapshot);
+    });
   }
 
   private async replaceScannedFolder(
@@ -276,21 +288,23 @@ export class LibraryService {
     const controller = new AbortController();
     this.scanController = controller;
     const operationId = `scan-${Date.now()}-${Math.round(Math.random() * 100000)}`;
-    let previousDocument: LibraryDocument | null = null;
-    try {
-      await this.load(true);
-      assertNotAborted(controller.signal);
-      previousDocument = structuredClone(this.document);
-      await operation(operationId, controller.signal);
-      assertNotAborted(controller.signal);
-      await this.save();
-      return structuredClone(this.document.snapshot);
-    } catch (error) {
-      if (previousDocument) this.document = previousDocument;
-      throw error;
-    } finally {
-      if (this.scanController === controller) this.scanController = null;
-    }
+    return this.exclusive(async () => {
+      let previousDocument: LibraryDocument | null = null;
+      try {
+        await this.load(true);
+        assertNotAborted(controller.signal);
+        previousDocument = structuredClone(this.document);
+        await operation(operationId, controller.signal);
+        assertNotAborted(controller.signal);
+        await this.save();
+        return structuredClone(this.document.snapshot);
+      } catch (error) {
+        if (previousDocument) this.document = previousDocument;
+        throw error;
+      } finally {
+        if (this.scanController === controller) this.scanController = null;
+      }
+    });
   }
 
   async addFolder(folderPath: string, onProgress?: ProgressListener): Promise<LibrarySnapshot> {
@@ -313,14 +327,16 @@ export class LibraryService {
   }
 
   async removeFolder(folderId: string): Promise<LibrarySnapshot> {
-    await this.load(true);
-    const existing = this.document.snapshot.folders.find((folder) => folder.id === folderId);
-    if (!existing) throw new ResolveHostError("LIBRARY_FOLDER_UNKNOWN", "The selected library folder no longer exists.");
-    this.document.snapshot.folders = this.document.snapshot.folders.filter((folder) => folder.id !== folderId);
-    this.document.snapshot.sounds = this.document.snapshot.sounds.filter((sound) => sound.folderId !== folderId);
-    this.document.snapshot.updatedAt = Date.now();
-    await this.save();
-    return structuredClone(this.document.snapshot);
+    return this.exclusive(async () => {
+      await this.load(true);
+      const existing = this.document.snapshot.folders.find((folder) => folder.id === folderId);
+      if (!existing) throw new ResolveHostError("LIBRARY_FOLDER_UNKNOWN", "The selected library folder no longer exists.");
+      this.document.snapshot.folders = this.document.snapshot.folders.filter((folder) => folder.id !== folderId);
+      this.document.snapshot.sounds = this.document.snapshot.sounds.filter((sound) => sound.folderId !== folderId);
+      this.document.snapshot.updatedAt = Date.now();
+      await this.save();
+      return structuredClone(this.document.snapshot);
+    });
   }
 
   cancelScan(): boolean {
@@ -330,58 +346,66 @@ export class LibraryService {
   }
 
   async setSoundFavorite(soundId: string, favorite: boolean): Promise<LibrarySnapshot> {
-    await this.load(true);
-    const sound = this.document.snapshot.sounds.find((candidate) => candidate.id === soundId);
-    if (!sound) throw new ResolveHostError("LIBRARY_SOUND_UNKNOWN", "The selected sound no longer exists in the library index.");
-    sound.favorite = favorite;
-    this.document.soundMetadata[nativeKey(sound.path)] = {
-      ...this.document.soundMetadata[nativeKey(sound.path)],
-      favorite,
-    };
-    this.document.snapshot.updatedAt = Date.now();
-    await this.save();
-    return structuredClone(this.document.snapshot);
+    return this.exclusive(async () => {
+      await this.load(true);
+      const sound = this.document.snapshot.sounds.find((candidate) => candidate.id === soundId);
+      if (!sound) throw new ResolveHostError("LIBRARY_SOUND_UNKNOWN", "The selected sound no longer exists in the library index.");
+      sound.favorite = favorite;
+      this.document.soundMetadata[nativeKey(sound.path)] = {
+        ...this.document.soundMetadata[nativeKey(sound.path)],
+        favorite,
+      };
+      this.document.snapshot.updatedAt = Date.now();
+      await this.save();
+      return structuredClone(this.document.snapshot);
+    });
   }
 
   async setFolderPinned(nodeId: string, pinned: boolean): Promise<LibrarySnapshot> {
-    await this.load(true);
-    const node = findTreeNode(this.document.snapshot.folders.map((folder) => folder.tree), nodeId);
-    if (!node) throw new ResolveHostError("LIBRARY_FOLDER_UNKNOWN", "The selected library folder no longer exists.");
-    node.pinned = pinned;
-    this.document.folderMetadata[nativeKey(node.path)] = {
-      ...this.document.folderMetadata[nativeKey(node.path)],
-      pinned,
-    };
-    this.document.snapshot.updatedAt = Date.now();
-    await this.save();
-    return structuredClone(this.document.snapshot);
+    return this.exclusive(async () => {
+      await this.load(true);
+      const node = findTreeNode(this.document.snapshot.folders.map((folder) => folder.tree), nodeId);
+      if (!node) throw new ResolveHostError("LIBRARY_FOLDER_UNKNOWN", "The selected library folder no longer exists.");
+      node.pinned = pinned;
+      this.document.folderMetadata[nativeKey(node.path)] = {
+        ...this.document.folderMetadata[nativeKey(node.path)],
+        pinned,
+      };
+      this.document.snapshot.updatedAt = Date.now();
+      await this.save();
+      return structuredClone(this.document.snapshot);
+    });
   }
 
   async setSoundLabel(soundId: string, labelColor?: LibrarySound["labelColor"]): Promise<LibrarySnapshot> {
-    await this.load(true);
-    const sound = this.document.snapshot.sounds.find((candidate) => candidate.id === soundId);
-    if (!sound) throw new ResolveHostError("LIBRARY_SOUND_UNKNOWN", "The selected sound no longer exists in the library index.");
-    sound.labelColor = labelColor;
-    this.document.soundMetadata[nativeKey(sound.path)] = {
-      ...this.document.soundMetadata[nativeKey(sound.path)],
-      labelColor,
-    };
-    this.document.snapshot.updatedAt = Date.now();
-    await this.save();
-    return structuredClone(this.document.snapshot);
+    return this.exclusive(async () => {
+      await this.load(true);
+      const sound = this.document.snapshot.sounds.find((candidate) => candidate.id === soundId);
+      if (!sound) throw new ResolveHostError("LIBRARY_SOUND_UNKNOWN", "The selected sound no longer exists in the library index.");
+      sound.labelColor = labelColor;
+      this.document.soundMetadata[nativeKey(sound.path)] = {
+        ...this.document.soundMetadata[nativeKey(sound.path)],
+        labelColor,
+      };
+      this.document.snapshot.updatedAt = Date.now();
+      await this.save();
+      return structuredClone(this.document.snapshot);
+    });
   }
 
   async setFolderLabel(nodeId: string, labelColor?: LibraryTreeNode["labelColor"]): Promise<LibrarySnapshot> {
-    await this.load(true);
-    const node = findTreeNode(this.document.snapshot.folders.map((folder) => folder.tree), nodeId);
-    if (!node) throw new ResolveHostError("LIBRARY_FOLDER_UNKNOWN", "The selected library folder no longer exists.");
-    node.labelColor = labelColor;
-    this.document.folderMetadata[nativeKey(node.path)] = {
-      ...this.document.folderMetadata[nativeKey(node.path)],
-      labelColor,
-    };
-    this.document.snapshot.updatedAt = Date.now();
-    await this.save();
-    return structuredClone(this.document.snapshot);
+    return this.exclusive(async () => {
+      await this.load(true);
+      const node = findTreeNode(this.document.snapshot.folders.map((folder) => folder.tree), nodeId);
+      if (!node) throw new ResolveHostError("LIBRARY_FOLDER_UNKNOWN", "The selected library folder no longer exists.");
+      node.labelColor = labelColor;
+      this.document.folderMetadata[nativeKey(node.path)] = {
+        ...this.document.folderMetadata[nativeKey(node.path)],
+        labelColor,
+      };
+      this.document.snapshot.updatedAt = Date.now();
+      await this.save();
+      return structuredClone(this.document.snapshot);
+    });
   }
 }

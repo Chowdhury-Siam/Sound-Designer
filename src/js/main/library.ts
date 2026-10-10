@@ -649,12 +649,7 @@ const writeSharedLibraryPaths = (paths: string[]) => {
   try {
     if (!fs.existsSync(directory)) fs.mkdirSync(directory);
     fs.writeFileSync(temporaryPath, JSON.stringify({ version: 1, paths, updatedAt: Date.now() }), "utf8");
-    try {
-      fs.renameSync(temporaryPath, storagePath);
-    } catch (_renameError) {
-      if (fs.existsSync(storagePath)) fs.unlinkSync(storagePath);
-      fs.renameSync(temporaryPath, storagePath);
-    }
+    fs.renameSync(temporaryPath, storagePath);
     return true;
   } catch (_error) {
     try { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); } catch (_cleanupError) {}

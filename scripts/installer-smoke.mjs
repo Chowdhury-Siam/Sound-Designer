@@ -13,16 +13,13 @@ const windowsInstaller = read("scripts/windows-installer.cs");
 const macBuilder = read("scripts/build-macos-installer.mjs");
 const packager = read("scripts/package-release.mjs");
 const macResources = read("scripts/macos-installer.mjs");
-const nativeAssembly = read("resolve/scripts/assemble.ts");
-assert.ok(nativeAssembly.includes('"-arch", "x86_64", "-arch", "arm64"'), "Menu bridge compilation must support both Resolve CPU modes");
-assert.match(macBuilder, /for \(const name of \["WorkflowIntegration\.node", "macos-menu\.node"\]\)/);
 const nativeSigning = macBuilder.slice(macBuilder.indexOf('  if (target === "resolve" && !candidate)'), macBuilder.indexOf('  const runtimeArch'));
 for (const target of ["adobe", "resolve"]) for (const candidate of [false, true]) for (const identity of [undefined, "fixture-identity"]) {
   const calls = [];
   vm.runInNewContext(nativeSigning, { target, candidate, files: "/fixture", path, process: { env: { SOUNDDESIGNER_MAC_CODE_IDENTITY: identity } }, run: (command, args) => calls.push({ command, args }) });
   const active = target === "resolve" && !candidate;
-  assert.deepEqual(calls.filter(call => call.args.includes("--verify")).map(call => path.basename(call.args.at(-1))), active ? ["WorkflowIntegration.node", "macos-menu.node"] : []);
-  assert.equal(calls.filter(call => call.args.includes("--sign")).length, active && identity ? 2 : 0, "Candidate signing must stay opt-in and release signing must cover both addons");
+  assert.deepEqual(calls.filter(call => call.args.includes("--verify")).map(call => path.basename(call.args.at(-1))), active ? ["WorkflowIntegration.node"] : []);
+  assert.equal(calls.filter(call => call.args.includes("--sign")).length, 0, "Never replace the SDK's vendor signing identity, even with a legacy code-signing override");
 }
 
 assert.equal(packageJson.scripts["installer:windows"], "node scripts/build-windows-installer.mjs");
@@ -166,7 +163,6 @@ assert.equal(context.checkChoices(), false);
 for (const arch of ["arm64", "x86_64"]) for (const phase of ["preinstall", "postinstall"]) {
   const install = componentScript("resolve", phase, arch);
   assert.ok(install.includes(`/usr/bin/lipo "$tree/WorkflowIntegration.node" -verify_arch ${arch}`), "lipo requires its input before the architecture list");
-  assert.ok(install.includes(`/usr/bin/lipo "$tree/macos-menu.node" -verify_arch ${arch}`), "The menu bridge must match the Resolve runtime architecture");
 }
 for (const target of ["adobe", "resolve"]) {
   const install = componentScript(target, "postinstall");

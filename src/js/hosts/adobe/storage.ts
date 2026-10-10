@@ -1,5 +1,6 @@
 import { crypto, fs, path } from "../../lib/cep/node";
 import { nativePathKey } from "../../platform/nativePaths";
+import { isStorageLockOwnerAlive } from "../../platform/storageLock";
 import { normalizeDialogPath } from "../../main/library";
 import type { HostProjectContext } from "../../main/types";
 import type { AudioStorageMode, PlatformPortablePreferences, PlatformStorageInfo } from "../../platform/types";
@@ -29,6 +30,7 @@ export class AdobeStorageService {
   private root = "";
   private audioStorageMode: AudioStorageMode = "project";
   private writes: Promise<void> = Promise.resolve();
+  private manifestReady: Promise<void> | null = null;
 
   constructor(private readonly pointerDirectory: string, private readonly defaultRoot: string) {}
 
@@ -41,7 +43,11 @@ export class AdobeStorageService {
     this.root = isObject(pointer) && typeof pointer.root === "string" && path.isAbsolute(pointer.root) ? path.resolve(pointer.root) : "";
     const audioSettings = this.readJson(path.join(this.pointerDirectory, "adobe-audio-storage.json"));
     this.audioStorageMode = isObject(audioSettings) && audioSettings.version === 2 && audioSettings.mode === "central" ? "central" : "project";
-    await this.ensureManifest();
+    // Share first-use migration/validation; each operation still reads current shared data.
+    await (this.manifestReady ??= this.ensureManifest().catch((error) => {
+      this.manifestReady = null;
+      throw error;
+    }));
     // v1 could infer Central from Resolve's shared pointer; reset that ambiguous default once.
     if (!isObject(audioSettings) || audioSettings.version !== 2) await this.setAudioStorageMode(this.audioStorageMode);
     return this.info;
@@ -102,8 +108,13 @@ export class AdobeStorageService {
     return (this.readManifest().library as T | undefined) || null;
   }
 
-  async saveLibrary(value: unknown): Promise<void> {
-    await this.updateManifest((manifest) => { manifest.library = value; });
+  async saveLibrary(value: unknown, expected?: string): Promise<void> {
+    await this.updateManifest((manifest) => {
+      if (expected !== undefined && JSON.stringify(manifest.library ?? null) !== expected) {
+        throw new Error("The sound library changed in another window. Refresh it and retry this operation.");
+      }
+      manifest.library = value;
+    });
   }
 
   async getLibraryMetadata(): Promise<unknown | null> {
@@ -207,7 +218,9 @@ export class AdobeStorageService {
         if (descriptor !== undefined) try { fs.closeSync(descriptor); } catch (_closeError) {}
         if (!error || typeof error !== "object" || !("code" in error) || String((error as { code: unknown }).code) !== "EEXIST") throw error;
         const first = fs.existsSync(lockPath) ? fs.statSync(lockPath) : null;
-        if (first && Date.now() - first.mtimeMs > 30_000) {
+        let owner: string | undefined;
+        try { owner = fs.readFileSync(lockPath, "utf8"); } catch (_error) {}
+        if (first && owner !== undefined && Date.now() - first.mtimeMs > 30_000 && !isStorageLockOwnerAlive(owner)) {
           const second = fs.existsSync(lockPath) ? fs.statSync(lockPath) : null;
           if (second?.mtimeMs === first.mtimeMs) try { fs.unlinkSync(lockPath); } catch (_error) {}
           continue;
@@ -224,12 +237,10 @@ export class AdobeStorageService {
 
   private writeJson(filePath: string, value: unknown) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const temporary = `${filePath}.tmp-${processId()}`;
-    fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-    try { fs.renameSync(temporary, filePath); }
-    catch (_error) {
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    const temporary = `${filePath}.tmp-${processId()}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    try {
+      fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
       fs.renameSync(temporary, filePath);
-    }
+    } finally { try { fs.unlinkSync(temporary); } catch (_error) {} }
   }
 }

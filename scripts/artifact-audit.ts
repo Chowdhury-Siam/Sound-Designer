@@ -35,7 +35,7 @@ export const auditPayload = async (directory: string, host: Host, platform: stri
       else {
         if (!info.isFile()) throw new Error(`Non-file artifact entry: ${relative}`);
         const allowed = host === "resolve"
-          ? /^(?:main\.cjs|preload\.cjs|manifest\.xml|package\.json|WorkflowIntegration\.node|macos-menu\.node|ui\/index\.html|ui\/assets\/[^/]+\.(?:js|css))$/
+          ? /^(?:main\.cjs|preload\.cjs|manifest\.xml|package\.json|WorkflowIntegration\.node|ui\/index\.html|ui\/assets\/[^/]+\.(?:js|css))$/
           : /^(?:mimetype|CSXS\/manifest\.xml|jsx\/index\.js|main\/index\.html|META-INF\/signatures\.xml|assets\/[^/]+\.(?:cjs|css|svg|png)|icons\/[^/]+\.png)$/;
         if (!allowed.test(relative)) throw new Error(`Unexpected ${host} payload file: ${relative}`);
         if (relative === "mimetype" && (await readFile(file, "utf8")).trim() !== "application/vnd.adobe.air-ucf-package+zip") throw new Error("Unexpected ZXP mimetype metadata");
@@ -63,12 +63,6 @@ export const auditPayload = async (directory: string, host: Host, platform: stri
     if (!manifest.includes("<Id>com.sound.designer.resolve</Id>") || !manifest.includes(`<Version>${version}</Version>`) || pkg.name !== "com.sound.designer.resolve" || pkg.version !== version || pkg.main !== "main.cjs") throw new Error("Resolve payload ID/version/entry mismatch");
     if (files.includes("WorkflowIntegration.node")) validateNativeModule(await readFile(path.join(directory, "WorkflowIntegration.node")), platform, arch);
     else if (!allowMissingNative) throw new Error("Resolve payload is missing WorkflowIntegration.node");
-    if (files.includes("macos-menu.node")) {
-      if (platform !== "darwin") throw new Error("macOS menu bridge must not be included in non-Mac payloads");
-      const bytes = await readFile(path.join(directory, "macos-menu.node"));
-      const architectures = validateNativeModule(bytes, platform, arch);
-      if (!architectures.includes("x64") || !architectures.includes("arm64")) throw new Error("macos-menu.node must support both Intel and Apple Silicon Resolve runtimes");
-    } else if (platform === "darwin" && !allowMissingNative) throw new Error("Resolve payload is missing macos-menu.node");
     if (files.filter(file => /^ui\/assets\/.*\.css$/.test(file)).length !== 1 || files.filter(file => /^ui\/assets\/.*\.js$/.test(file)).length !== 1) throw new Error("Resolve must contain exactly one shared UI script and stylesheet");
   }
   const hashes: Record<string, string> = {};

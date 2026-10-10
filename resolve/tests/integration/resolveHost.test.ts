@@ -45,6 +45,8 @@ const createMock = (synchronous = false) => {
   const appendCalls: any[] = [];
   let folderSelections = 0;
   let clipIdLookups = 0;
+  let contextDetailReads = 0;
+  let timelineId = "timeline-1";
   const videoItems = [{ GetStart: async () => 86424, GetEnd: async () => 86472, GetName: async () => "Logo slide" }];
   const trackItems: Record<number, any[]> = {
     1: [{ GetStart: async () => 0, GetEnd: async () => 99999, GetMediaPoolItem: async () => null }],
@@ -109,9 +111,9 @@ const createMock = (synchronous = false) => {
   };
   currentFolder = rootFolder;
   const timeline = {
-    GetUniqueId: async () => "timeline-1",
-    GetName: async () => "Timeline 1",
-    GetCurrentTimecode: async () => "01:00:00:00",
+    GetUniqueId: async () => timelineId,
+    GetName: async () => { contextDetailReads++; return "Timeline 1"; },
+    GetCurrentTimecode: async () => { contextDetailReads++; return "01:00:00:00"; },
     GetTrackCount: async (type: string) => type === "video" ? 1 : trackCount,
     GetIsTrackEnabled: async () => true,
     GetIsTrackLocked: async () => false,
@@ -129,7 +131,7 @@ const createMock = (synchronous = false) => {
   };
   const project = {
     GetUniqueId: async () => projectId,
-    GetName: async () => "Test Project",
+    GetName: async () => { contextDetailReads++; return "Test Project"; },
     GetCurrentTimeline: async () => timeline,
     GetMediaPool: async () => mediaPool,
     InsertAudioToCurrentTrackAtPlayhead: async (filePath: string) => {
@@ -144,7 +146,7 @@ const createMock = (synchronous = false) => {
   };
   const resolve = {
     GetProjectManager: async () => ({ GetCurrentProject: async () => project }),
-    GetCurrentPage: async () => currentPage,
+    GetCurrentPage: async () => { contextDetailReads++; return currentPage; },
   };
   const workflow: WorkflowIntegrationModule = {
     InitializePromise: async () => {
@@ -187,7 +189,9 @@ const createMock = (synchronous = false) => {
     getCurrentFolder: () => currentFolder,
     getFolderSelections: () => folderSelections,
     getClipIdLookups: () => clipIdLookups,
+    getContextDetailReads: () => contextDetailReads,
     setProjectId: (value: string) => { projectId = value; },
+    setTimelineId: (value: string) => { timelineId = value; },
     setOnBinCreate: (callback: () => void) => { onBinCreate = callback; },
     setCurrentPage: (value: string) => { currentPage = value; },
     addRootClip: (filePath: string) => rootClips.push(makeClip(filePath, "misplaced-clip")),
@@ -211,6 +215,13 @@ describe("Resolve host adapter", () => {
     const mock = createMock();
     const host = new NativeResolveHost(mock.workflow, "com.sound.designer.resolve");
     await host.getProjectContext();
+    expect(mock.workflowCalls).toEqual(["initialize", "timeout", "resolve"]);
+  });
+
+  test("concurrent first requests share one native initialization", async () => {
+    const mock = createMock();
+    const host = new NativeResolveHost(mock.workflow, "com.sound.designer.resolve");
+    await Promise.all([host.getProjectContext(), host.getProjectContext(), host.getProjectContext()]);
     expect(mock.workflowCalls).toEqual(["initialize", "timeout", "resolve"]);
   });
 
@@ -282,9 +293,30 @@ describe("Resolve host adapter", () => {
     expect(mock.getClipIdLookups()).toBe(1);
     expect(await mock.getCurrentFolder().GetName()).toBe("SoundDesigner");
     expect(mock.importedClips[0].clipName).toBe("Clean sound");
+    expect(mock.getContextDetailReads()).toBe(0);
     await host.importPreparedAudio({ path: file, sourceId: "fixture", displayName: "Clean sound", projectId: "project-1" }, true);
     expect(mock.importedClips).toHaveLength(1);
+    expect(mock.getContextDetailReads()).toBe(0);
     await expect(host.importPreparedAudio({ path: file, sourceId: "fixture", displayName: "Clean sound", projectId: "other-project" }, true)).rejects.toThrow("project changed");
+  });
+
+  test("fast drag preflight still rejects project and timeline switches", async () => {
+    const file = await wavFixture();
+    for (const changed of ["project", "timeline"]) {
+      const mock = createMock();
+      mock.setOnBinCreate(() => {
+        if (changed === "project") mock.setProjectId("project-2");
+        else mock.setTimelineId("timeline-2");
+      });
+      const host = new NativeResolveHost(mock.workflow, "com.sound.designer.resolve");
+      await expect(host.importPreparedAudio({ path: file, sourceId: "fixture", displayName: "Clean sound", projectId: "project-1" }, true)).rejects.toThrow("project or timeline changed");
+      expect(mock.getContextDetailReads()).toBe(0);
+    }
+    const mock = createMock();
+    mock.setProjectId("");
+    const host = new NativeResolveHost(mock.workflow, "com.sound.designer.resolve");
+    await expect(host.importPreparedAudio({ path: file, sourceId: "fixture", displayName: "Clean sound" }, true)).rejects.toThrow("incomplete project context");
+    expect(mock.importedClips).toHaveLength(0);
   });
 
   test("uses the selected Fairlight track when requested", async () => {

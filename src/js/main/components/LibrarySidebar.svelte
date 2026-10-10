@@ -64,11 +64,12 @@
   let progressLocation = $derived(folderNameFromPath(indexProgress.currentPath));
   let visibleFolders = $derived(folders.filter((folder) => treeMatchesQuery(folder.tree, normalizedQuery)));
   let activeSourceCount = $derived(Number(localSourceEnabled) + Number(cloudLibraryEnabled) + Number(freesoundLibraryEnabled && freesoundSourceEnabled));
-  // Adaptive indent: squeeze the per-level indent (10px → 4px) only when the deepest open level would leave names too little room.
+  // Keep branch elbows readable; compact the secondary badge before sacrificing hierarchy.
   const maxVisibleDepth = (nodes: LibraryFolder["tree"][], depth: number): number => {
     let max = -1;
     for (const node of nodes) {
-      const tail = compactChain(node, normalizedQuery).at(-1)!;
+      const chain = compactChain(node, normalizedQuery);
+      const tail = chain[chain.length - 1];
       max = Math.max(max, depth);
       if (normalizedQuery || expandedIds.has(tail.id)) {
         max = Math.max(max, maxVisibleDepth(tail.children.filter(child => treeMatchesQuery(child, normalizedQuery)), depth + 1));
@@ -79,16 +80,10 @@
   let branchWidth = $state(0);
   let deepestLevel = $derived(maxVisibleDepth(visibleFolders.map(folder => folder.tree), 0));
   let treeIndent = $derived.by(() => {
-    if (deepestLevel <= 0 || !branchWidth) return 10;
-    const rowChrome = 67; // padding, expander, folder icon, count badge, gaps
-    const minNameWidth = 100;
-    return Math.max(4, Math.min(10, Math.floor((branchWidth - rowChrome - minNameWidth) / deepestLevel)));
-  });
-  let treeIconSize = $derived.by(() => {
-    if (deepestLevel <= 0 || !branchWidth || treeIndent >= 9) return 14;
-    if (treeIndent >= 7) return 13;
-    if (treeIndent >= 5) return 12;
-    return 11;
+    if (deepestLevel <= 0 || !branchWidth) return 16;
+    const rowChrome = 66 + (branchWidth < 260 ? 32 : 58);
+    const minNameWidth = 56;
+    return Math.max(10, Math.min(16, Math.floor((branchWidth - rowChrome - minNameWidth) / deepestLevel)));
   });
   const collectPinned = (foldersToSearch: LibraryFolder[]) => {
     const pinned: LibraryFolder["tree"][] = [];
@@ -104,6 +99,16 @@
     return pinned;
   };
   let pinnedFolders = $derived(collectPinned(folders));
+  let favoriteCounts = $derived.by(() => {
+    const counts = new Map<string, number>();
+    const ids = new Set<string>();
+    for (const sound of favoriteSounds) {
+      ids.add(sound.id);
+      const collection = sound.favoriteCollection || "";
+      counts.set(collection, (counts.get(collection) || 0) + 1);
+    }
+    return { total: ids.size, collections: counts };
+  });
   let pinnedContextNode = $state<LibraryFolder["tree"] | null>(null);
   let pinnedContextX = $state(0);
   let pinnedContextY = $state(0);
@@ -182,14 +187,14 @@
     <div class="favorite-library-section">
       <div class="favorite-library-heading">
         <button class="tree-expander tooltip" class:is-expanded={favoritesExpanded} data-tooltip={favoritesExpanded ? "Hide favorite collections" : "Show favorite collections"} aria-label={favoritesExpanded ? "Collapse Favorites collections" : "Expand Favorites collections"} aria-expanded={favoritesExpanded} onclick={() => favoritesExpanded = !favoritesExpanded} type="button"><Icon name="chevron" size={12} /></button>
-        <button class:is-selected={favoriteSelected !== null} class="favorite-library-row tooltip" data-tooltip="Favorites across every folder" onclick={() => onSelectFavorites("all")} type="button"><Icon name="heart" size={14} /><span>Favorites</span><small>{new Set(favoriteSounds.map(sound => sound.id)).size}</small></button>
+        <button class:is-selected={favoriteSelected !== null} class="favorite-library-row tooltip" data-tooltip="Favorites across every folder" onclick={() => onSelectFavorites("all")} type="button"><Icon name="heart" size={14} /><span>Favorites</span><small>{favoriteCounts.total}</small></button>
       </div>
       {#if favoritesExpanded}
-      <button class:is-selected={favoriteSelected === ""} class="favorite-library-row tooltip" data-tooltip="Favorites without a collection" onclick={() => onSelectFavorites("")} type="button"><Icon name="folder" size={12} /><span>Main Favorites</span><small>{favoriteSounds.filter(sound => !sound.favoriteCollection).length}</small></button>
+      <button class:is-selected={favoriteSelected === ""} class="favorite-library-row tooltip" data-tooltip="Favorites without a collection" onclick={() => onSelectFavorites("")} type="button"><Icon name="folder" size={12} /><span>Main Favorites</span><small>{favoriteCounts.collections.get("") || 0}</small></button>
       {#each orderedCollections as { item } (item.id)}
         <div class="favorite-library-heading">
           <button class="tree-expander" class:is-expanded={expandedCollectionIds.has(item.id)} disabled={!collections.some(child => child.parentId === item.id)} aria-label={`${expandedCollectionIds.has(item.id) ? "Collapse" : "Expand"} ${item.name} collection`} aria-expanded={expandedCollectionIds.has(item.id)} onclick={() => toggleCollection(item.id)} type="button"><Icon name="chevron" size={12} /></button>
-          <button class:is-selected={favoriteSelected === item.id} class="favorite-library-row tooltip" data-tooltip={collectionPath(item)} onclick={() => onSelectFavorites(item.id)} type="button"><Icon name="folder" size={12} /><span>{item.name}</span><small>{favoriteSounds.filter(sound => sound.favoriteCollection === item.id).length}</small></button>
+          <button class:is-selected={favoriteSelected === item.id} class="favorite-library-row tooltip" data-tooltip={collectionPath(item)} onclick={() => onSelectFavorites(item.id)} type="button"><Icon name="folder" size={12} /><span>{item.name}</span><small>{favoriteCounts.collections.get(item.id) || 0}</small></button>
         </div>
       {/each}
       {/if}
@@ -202,7 +207,7 @@
         <span class="library-copy"><strong>Local</strong><small>{sounds.length.toLocaleString()} indexed sounds</small></span>
       </label>
       {#if localSourceEnabled}
-        <div class="local-library-branch" bind:clientWidth={branchWidth} style:--tree-indent={`${treeIndent}px`} style:--tree-icon-size={`${treeIconSize}px`}>
+        <div class="local-library-branch" class:is-compact-tree={branchWidth < 260} bind:clientWidth={branchWidth} style:--tree-indent={`${treeIndent}px`}>
           {#if folders.length}
             <label class="compact-search">
               <Icon name="search" size={13} />

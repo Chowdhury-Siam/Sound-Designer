@@ -110,6 +110,8 @@ describe("portable storage", () => {
     await storage.initialize(root);
     const lock = path.join(pointer, ".sounddesigner.lock");
     await writeFile(lock, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }));
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lock, old, old);
     await expect(storage.writePreferences({ blocked: true })).rejects.toThrow("busy in another host");
     expect(await readFile(lock, "utf8")).toContain(String(process.pid));
   }, 15_000);

@@ -30,7 +30,10 @@ const readAudioFile = async (filePath: string): Promise<ArrayBuffer> => {
   if (platform().capabilities.nativeAudioPreparation) {
     const result = await platform().audio.readFile(filePath);
     if (!result.ok) throw new Error(result.error.message);
-    return new Uint8Array(result.data).buffer;
+    const bytes = result.data;
+    return bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+      ? bytes.buffer as ArrayBuffer
+      : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   }
   return new Promise<ArrayBuffer>((resolve, reject) => {
   fs.readFile(filePath, (error, bytes) => {
@@ -39,7 +42,9 @@ const readAudioFile = async (filePath: string): Promise<ArrayBuffer> => {
       return;
     }
     const source = bytes.buffer as ArrayBuffer;
-    resolve(source.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    resolve(bytes.byteOffset === 0 && bytes.byteLength === source.byteLength
+      ? source
+      : source.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
   });
   });
 };
@@ -139,7 +144,10 @@ const readRemoteAudio = async (remoteUrl: string, shouldContinue?: () => boolean
     const result = await platform().cloud.readFreesoundPreview({ operationId: globalThis.crypto.randomUUID(), url: remoteUrl });
     if (!result.ok) throw new Error(result.error.message);
     if (result.data.byteLength > MAX_DECODE_BYTES) throw new Error("Remote preview is too large to decode.");
-    return new Uint8Array(result.data).buffer;
+    const bytes = result.data;
+    return bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+      ? bytes.buffer as ArrayBuffer
+      : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   }
   if (!window.cep) {
     const response = await fetch(remoteUrl);
@@ -222,6 +230,8 @@ const decodeAudioBytes = async (
     context = new AudioContextConstructor();
     const audioBuffer = await context.decodeAudioData(bytes);
     if (shouldContinue && !shouldContinue()) return [];
+    if (audioBuffer.duration > MAX_DECODE_DURATION_SECONDS
+      || audioBuffer.length * audioBuffer.numberOfChannels * 4 > MAX_PREVIEW_PCM_BYTES) return [];
     const channels: Float32Array[] = [];
     for (let channel = 0; channel < audioBuffer.numberOfChannels; channel += 1) {
       channels.push(extractPeaks(audioBuffer.getChannelData(channel), PEAK_BINS));

@@ -7,6 +7,7 @@
     progress = 0,
     zoom = 1,
     reversed = false,
+    selectionRange = null,
     reverseRange = null,
     showModeControls = true,
     channelCountHint = 0,
@@ -19,6 +20,7 @@
     progress?: number;
     zoom?: number;
     reversed?: boolean;
+    selectionRange?: { left: number; right: number } | null;
     reverseRange?: { start: number; end: number } | null;
     showModeControls?: boolean;
     channelCountHint?: number;
@@ -138,15 +140,33 @@
       <span></span>
     </div>
   {:else}
-    <div class="channel-lanes" style={`--channel-count: ${visibleChannelPaths.length}`}>
-      {#each visibleChannelPaths as channel (channel.index)}
-        <div class="channel-lane">
-          <span class="channel-centerline"></span>
-          <svg aria-hidden="true" preserveAspectRatio="none" viewBox="0 0 1024 100">
-            <path d={channel.path}></path>
-          </svg>
+    <div class="channel-lanes-wrap">
+      <div class="channel-lanes" style={`--channel-count: ${visibleChannelPaths.length}`}>
+        {#each visibleChannelPaths as channel (channel.index)}
+          <div class="channel-lane">
+            <span class="channel-centerline"></span>
+            <svg aria-hidden="true" preserveAspectRatio="none" viewBox="0 0 1024 100">
+              <path d={channel.path}></path>
+            </svg>
+          </div>
+        {/each}
+      </div>
+      {#if selectionRange && selectionRange.right > selectionRange.left}
+        <div
+          aria-hidden="true"
+          class="channel-lanes channel-lanes--selected"
+          style={`--channel-count: ${visibleChannelPaths.length}; clip-path: inset(0 ${100 - selectionRange.right}% 0 ${selectionRange.left}%);`}
+        >
+          {#each visibleChannelPaths as channel (channel.index)}
+            <div class="channel-lane">
+              <span class="channel-centerline"></span>
+              <svg aria-hidden="true" preserveAspectRatio="none" viewBox="0 0 1024 100">
+                <path d={channel.path}></path>
+              </svg>
+            </div>
+          {/each}
         </div>
-      {/each}
+      {/if}
     </div>
   {/if}
   {#if showModeControls}

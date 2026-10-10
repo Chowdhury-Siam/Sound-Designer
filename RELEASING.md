@@ -22,6 +22,8 @@ The current candidate is **unpublished**. See [compatibility](COMPATIBILITY.md) 
 
 Missing inputs fail with `BLOCKED` messages. A filesystem path alone does not supply a module/certificate. Workflow edits were locally reviewed/tested; a remote Actions run is separate evidence. The native-certification reminder's successful shell exit is not certification.
 
+The separate [release banner action](.github/workflows/release-banner.yml) runs after a release is published. Its job has `contents: write` only to embed the commit-pinned artwork in existing release notes and attach the SVG. It does not publish drafts, replace installer assets, or change the readiness/signing gates. See [banner integration](docs/BANNER.md#release-description) for prerequisites and automated-publisher behavior.
+
 ## Reproduce the unsigned candidate
 
 From this repository only, with Bun 1.3.14 and a matching Windows SDK addon or explicitly supplied Mac addon:
@@ -82,7 +84,7 @@ The native distribution has independent Customize choices and stable component r
 
 Both receipt versions must match the candidate; their `--nopayload` scripts manage fixed-path host files, so receipts do not enumerate installed media files. On an actual test Mac verify `installer -showChoicesXML -pkg <candidate.pkg>`, per-choice installs, `pkgutil --pkg-info <receipt-id>`, and exact target payload hashes. Retain screenshots and command outputs.
 
-Only after **separate production-signing approval**, `SOUNDDESIGNER_PHASE4_APPROVED=1`, `SOUNDDESIGNER_SIGNING_APPROVED=1`, valid native signatures, and provisioned keychain identities/profile, may the existing Mac production builder use Developer ID **Installer** (`SOUNDDESIGNER_MAC_INSTALLER_IDENTITY`), optional Developer ID Application native signing (`SOUNDDESIGNER_MAC_CODE_IDENTITY`), and `SOUNDDESIGNER_MAC_NOTARY_PROFILE`.
+Only after **separate production-signing approval**, `SOUNDDESIGNER_PHASE4_APPROVED=1`, `SOUNDDESIGNER_SIGNING_APPROVED=1`, valid native signatures, and provisioned keychain identities/profile, may the existing Mac production builder use Developer ID **Installer** (`SOUNDDESIGNER_MAC_INSTALLER_IDENTITY`) and `SOUNDDESIGNER_MAC_NOTARY_PROFILE`. The Resolve SDK module retains its vendor signature; the builder verifies it without re-signing it.
 
 Capture and verify `codesign --verify --strict`, `pkgutil --check-signature`, `xcrun notarytool submit --wait` (Accepted), `xcrun stapler staple`, `xcrun stapler validate`, `spctl --assess --type install`, and a clean downloaded-package installation. Those operations are **BLOCKED** in this Windows handoff and were not performed. A signature metadata file or header audit does not verify publisher trust/notarization.
 
@@ -99,6 +101,6 @@ Close the affected host first. Restore a separately retained known-good host pay
 
 ## Later publication — separately authorized
 
-Approve the audited candidate and complete all blocked native/signing/installer evidence first. Choose a new release version if replacing the already published historical `v1.0.4`; update the root version and Resolve manifest together, rebuild/audit/re-certify, and add matching release notes. Only separate authorization permits committing, tagging, production-signing or publishing. The current workflow does none of these; a green run cannot publish a release.
+Approve the audited candidate and complete all blocked native/signing/installer evidence first. Choose a new release version if replacing the already published historical `v1.0.4`; update the root version and Resolve manifest together, rebuild/audit/re-certify, and add matching release notes. Only separate authorization permits committing, tagging, production-signing or publishing. The readiness workflow does none of these; a green run cannot publish a release.
 
 The updater ignores drafts/prereleases, checks trusted repository URLs, falls back to the release page when no compatible asset exists, and never silently installs an update. Verify both hosts' live current/available/offline/cache behavior before publication.

@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import path from "node:path";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,6 +15,116 @@ const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
 describe("Adobe portable storage", () => {
+  test("shares initialization without repeated manifest reads or locks and still sees Resolve updates", async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-adobe-init-"));
+    roots.push(fixture);
+    const pointer = path.join(fixture, "app-data");
+    const root = path.join(fixture, "central");
+    const adobe = new AdobeStorageService(pointer, root);
+    const manifest = path.join(pointer, "sounddesigner.json");
+    const lock = path.join(pointer, ".sounddesigner.lock");
+    const reads = spyOn(fs, "readFileSync");
+    const opens = spyOn(fs, "openSync");
+    try {
+      await Promise.all([adobe.initialize(), adobe.initialize(), adobe.initialize()]);
+      expect(opens.mock.calls.filter(([file]) => file === lock)).toHaveLength(1);
+      reads.mockClear();
+      opens.mockClear();
+      await Promise.all([adobe.initialize(), adobe.initialize()]);
+      expect(reads.mock.calls.filter(([file]) => file === manifest)).toHaveLength(0);
+      expect(opens.mock.calls.filter(([file]) => file === lock)).toHaveLength(0);
+      const resolve = new StorageService(pointer, root);
+      await resolve.initialize(root);
+      await resolve.writePreferences({ normalizationTargetDb: -9 });
+      await writeFile(path.join(pointer, "adobe-audio-storage.json"), JSON.stringify({ version: 2, mode: "central" }));
+      expect((await adobe.initialize()).root).toBe(root);
+      expect(adobe.info.audioStorageMode).toBe("central");
+      expect(await adobe.getPreferences()).toMatchObject({ normalizationTargetDb: -9 });
+    } finally {
+      reads.mockRestore();
+      opens.mockRestore();
+    }
+  });
+
+  test("retries failed initialization and continues to recover later corrupt manifests", async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-adobe-init-retry-"));
+    roots.push(fixture);
+    const pointer = path.join(fixture, "app-data");
+    await mkdir(pointer);
+    const manifest = path.join(pointer, "sounddesigner.json");
+    await writeFile(manifest, "{broken");
+    const adobe = new AdobeStorageService(pointer, path.join(fixture, "central"));
+    await expect(adobe.initialize()).rejects.toThrow("no valid backup");
+    await writeFile(manifest, JSON.stringify({ version: 2, createdAt: "2026-01-01", preferences: { normalizationTargetDb: -6 } }));
+    await adobe.initialize();
+    await adobe.savePreferences({ normalizationTargetDb: -12 } as any);
+    await writeFile(manifest, "{broken");
+    await adobe.initialize();
+    expect(await adobe.getPreferences()).toMatchObject({ normalizationTargetDb: -6 });
+    expect(JSON.parse(await readFile(manifest, "utf8")).preferences.normalizationTargetDb).toBe(-6);
+  });
+
+  test("Adobe serializes simultaneous favorite and label edits", async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-adobe-mutations-"));
+    roots.push(fixture);
+    const pointer = path.join(fixture, "app-data");
+    const root = path.join(fixture, "central");
+    const sounds = path.join(fixture, "sounds");
+    await mkdir(sounds);
+    await writeFile(path.join(sounds, "hit.wav"), Buffer.alloc(32));
+    const resolve = new StorageService(pointer, root);
+    await resolve.initialize(root);
+    const initial = await new LibraryService(resolve).addFolder(sounds);
+    const adobe = new AdobeStorageService(pointer, root);
+    await adobe.initialize();
+    const { AdobeLibraryService } = await import("../../../src/js/hosts/adobe/library");
+    const library = new AdobeLibraryService(adobe);
+    await Promise.all([library.setSoundFavorite(initial.sounds[0].id, true), library.setSoundLabel(initial.sounds[0].id, "blue")]);
+    expect((await library.getSnapshot()).sounds[0]).toMatchObject({ favorite: true, labelColor: "blue" });
+  });
+  test("rejects stale whole-library replacements in both directions", async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-library-conflict-"));
+    roots.push(fixture);
+    const pointer = path.join(fixture, "app-data");
+    const root = path.join(fixture, "central");
+    const resolve = new StorageService(pointer, root);
+    await resolve.initialize(root);
+    const adobe = new AdobeStorageService(pointer, root);
+    await adobe.initialize();
+    const baseline = JSON.stringify(await resolve.readLibrary() ?? null);
+    await adobe.saveLibrary({ from: "Adobe" }, baseline);
+    await expect(resolve.writeLibrary({ from: "Resolve" }, baseline)).rejects.toThrow("changed in another window");
+    expect(await resolve.readLibrary()).toEqual({ from: "Adobe" });
+    const next = JSON.stringify(await adobe.getLibrary());
+    await resolve.writeLibrary({ from: "Resolve" }, next);
+    await expect(adobe.saveLibrary({ from: "Adobe" }, next)).rejects.toThrow("changed in another window");
+    expect(await adobe.getLibrary()).toEqual({ from: "Resolve" });
+  });
+  test("failed manifest replacement preserves the previous file in both hosts", async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-save-failure-"));
+    roots.push(fixture);
+    const pointer = path.join(fixture, "app-data");
+    const root = path.join(fixture, "central");
+    const resolve = new StorageService(pointer, root);
+    await resolve.initialize(root);
+    const adobe = new AdobeStorageService(pointer, root);
+    await adobe.initialize();
+    await resolve.writePreferences({ keep: true });
+    const manifest = path.join(pointer, "sounddesigner.json");
+    const previous = await readFile(manifest, "utf8");
+    const failure = Object.assign(new Error("Rename blocked"), { code: "EACCES" });
+    const source = (await readFile(new URL("../../src/main/services/storageService.ts", import.meta.url), "utf8")).replaceAll("\r", "");
+    const body = source.match(/private async writeJson\(filePath: string, value: unknown\): Promise<void> \{\n([\s\S]*)\n  \}\n\}/)?.[1];
+    expect(body).toBeDefined();
+    const commit = new Function("writeFile", "rename", "rm", "process", "filePath", "value", `return (async () => { ${body} })();`);
+    await expect(commit(fsPromises.writeFile, async () => { throw failure; }, fsPromises.rm, process, manifest, { keep: false })).rejects.toThrow("Rename blocked");
+    expect(await readFile(manifest, "utf8")).toBe(previous);
+    const renameSync = spyOn(fs, "renameSync").mockImplementation(() => { throw failure; });
+    try {
+      await expect(adobe.savePreferences({ keep: false } as any)).rejects.toThrow("Rename blocked");
+      expect(await readFile(manifest, "utf8")).toBe(previous);
+    } finally { renameSync.mockRestore(); }
+  });
   test("resets the old inferred Adobe central default once and preserves subsequent explicit choices", async () => {
     const fixture = await mkdtemp(path.join(tmpdir(), "sounddesigner-inferred-mode-"));
     roots.push(fixture);

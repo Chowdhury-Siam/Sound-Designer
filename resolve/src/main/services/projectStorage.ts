@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import type { ResolveContext } from "../../shared/types";
 
@@ -10,8 +11,8 @@ export const sanitizeProjectName = (name: string): string => {
 };
 
 export const projectDirectoryName = (context: Pick<ResolveContext, "projectId" | "projectName">): string => {
-  const idPrefix = context.projectId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 12) || "unknown";
-  return `${sanitizeProjectName(context.projectName)}--${idPrefix}`;
+  const projectId = createHash("sha256").update(context.projectId).digest("hex").slice(0, 16);
+  return `${sanitizeProjectName(context.projectName)}--${projectId}`;
 };
 
 export class ProjectStorage {

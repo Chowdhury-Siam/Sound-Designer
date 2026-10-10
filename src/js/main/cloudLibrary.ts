@@ -18,10 +18,41 @@ const errorMessage = (error: unknown) => error && typeof error === "object" && "
 
 const browserRequest = async (url: string, signal?: AbortSignal): Promise<unknown> => {
   if (typeof fetch !== "function") throw new Error("Browser networking is unavailable.");
-  const response = await fetch(url, { headers: { Accept: "application/json" }, signal });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const body = await response.text();
-  try { return JSON.parse(body); } catch { throw new Error("Invalid JSON response"); }
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (signal?.aborted) abort(); else signal?.addEventListener("abort", abort, { once: true });
+  const timer = setTimeout(abort, 12000);
+  try {
+    const response = await fetch(url, { headers: { Accept: "application/json" }, signal: controller.signal, redirect: "error" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const limit = 2 * 1024 * 1024;
+    if (Number(response.headers.get("content-length") || 0) > limit) {
+      await response.body?.cancel();
+      throw new Error("Cloud response is too large.");
+    }
+    let body = "";
+    if (response.body) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let received = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += value.byteLength;
+        if (received > limit) { await reader.cancel(); throw new Error("Cloud response is too large."); }
+        body += decoder.decode(value, { stream: true });
+      }
+      body += decoder.decode();
+    } else body = await response.text();
+    if (body.length > limit) throw new Error("Cloud response is too large.");
+    try { return JSON.parse(body); } catch { throw new Error("Invalid JSON response"); }
+  } catch (error) {
+    if (controller.signal.aborted && !signal?.aborted) throw new Error("Request timed out");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
 };
 
 const nodeRequest = (url: string, signal?: AbortSignal): Promise<unknown> => new Promise((resolve, reject) => {

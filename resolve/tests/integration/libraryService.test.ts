@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { LibraryService } from "../../src/main/services/libraryService";
 import { StorageService } from "../../src/main/services/storageService";
@@ -27,6 +28,48 @@ const fixture = async () => {
 };
 
 describe("local library service", () => {
+  test("a disappearing or unreadable subfolder cannot silently prune the previous index", async () => {
+    const { root, state } = await fixture();
+    const service = new LibraryService(state);
+    const initial = await service.addFolder(root);
+    let removed = false;
+    await expect(service.rescan(undefined, () => {
+      if (!removed) { removed = true; rmSync(path.join(root, "Ambience"), { recursive: true }); }
+    })).rejects.toThrow("previous index has been preserved");
+    expect(await service.getSnapshot()).toEqual(initial);
+  });
+  test("a scan cannot overwrite library changes made by another instance", async () => {
+    const { root, state } = await fixture();
+    const first = new LibraryService(state);
+    const initial = await first.addFolder(root);
+    let changed: Promise<void> | undefined;
+    const scan = first.rescan(undefined, () => {
+      changed ??= state.writeLibrary({ version: 1, snapshot: { ...initial, folders: [], sounds: [] }, soundMetadata: {}, folderMetadata: {} });
+    });
+    await expect(scan).rejects.toThrow("changed in another window");
+    await changed;
+    expect((await new LibraryService(state).getSnapshot()).folders).toHaveLength(0);
+  });
+  test("same-instance metadata mutations are serialized without losing either edit", async () => {
+    const { root, state } = await fixture();
+    const service = new LibraryService(state);
+    const initial = await service.addFolder(root);
+    const sound = initial.sounds[0];
+    await Promise.all([service.setSoundFavorite(sound.id, true), service.setSoundLabel(sound.id, "blue")]);
+    const restored = await new LibraryService(state).getSnapshot();
+    expect(restored.sounds.find(item => item.id === sound.id)).toMatchObject({ favorite: true, labelColor: "blue" });
+  });
+  test("does not turn a storage read failure into an empty library", async () => {
+    let writes = 0;
+    const storage = {
+      readLibrary: async () => { throw new Error("Storage unavailable"); },
+      writeLibrary: async () => { writes++; },
+    } as unknown as StorageService;
+    const service = new LibraryService(storage);
+    await expect(service.getSnapshot()).rejects.toThrow("Storage unavailable");
+    await expect(service.removeFolder("existing")).rejects.toThrow("Storage unavailable");
+    expect(writes).toBe(0);
+  });
   test("recursively indexes supported audio and preserves the folder hierarchy", async () => {
     const { root, state } = await fixture();
     const progress: number[] = [];

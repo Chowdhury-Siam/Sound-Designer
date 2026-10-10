@@ -1,0 +1,36 @@
+name: Release banner
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-banner-${{ github.event.release.id }}
+  cancel-in-progress: false
+
+jobs:
+  banner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify release-note preservation
+        run: node --test scripts/release-banner.test.mjs
+      - name: Embed and attach the release artwork
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            const { resolve } = require('node:path');
+            const { applyReleaseBanner } = await import(
+              pathToFileURL(resolve('scripts/release-banner.mjs')).href
+            );
+            await applyReleaseBanner({ github, context, core });
