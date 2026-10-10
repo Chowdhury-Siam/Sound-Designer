@@ -41,7 +41,7 @@ jobs:
             const { execFileSync } = require('node:child_process');
             const { pathToFileURL } = require('node:url');
             const { resolve } = require('node:path');
-            const { shouldRelease, parseReleaseNotes } = await import(pathToFileURL(resolve('scripts/release-automation.mjs')).href);
+            const { shouldRelease, parseReleaseNotes, assertReleaseTagTarget } = await import(pathToFileURL(resolve('scripts/release-automation.mjs')).href);
             const { version } = JSON.parse(await readFile('package.json', 'utf8'));
             let previousVersion;
             if (context.eventName === 'push' && context.ref === 'refs/heads/main') {
@@ -64,10 +64,7 @@ jobs:
               if (!data.draft) { core.info(`${tag} is already public; it will not be replaced.`); return; }
               if (data.target_commitish !== context.sha) throw new Error('Existing draft targets another commit.');
             } catch (error) { if (error.status !== 404) throw error; }
-            try {
-              const { data } = await github.rest.repos.getCommit({ ...context.repo, ref: tag });
-              if (data.sha !== context.sha) throw new Error('Existing version tag targets another commit.');
-            } catch (error) { if (error.status !== 404) throw error; }
+            await assertReleaseTagTarget({ github, identity: { ...context.repo, sha: context.sha }, tag });
             core.setOutput('tag', tag);
             core.setOutput('publish', 'true');
 

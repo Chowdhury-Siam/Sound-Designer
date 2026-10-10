@@ -36,6 +36,26 @@ export function parseReleaseNotes(markdown, version) {
   return { title, body };
 }
 
+export async function assertReleaseTagTarget({ github, identity, tag }) {
+  if (!tag.startsWith('v')) throw new Error('Release tag must start with v.');
+  versionParts(tag.slice(1));
+  let reference;
+  try {
+    reference = (await github.rest.git.getRef({ owner: identity.owner, repo: identity.repo, ref: `tags/${tag}` })).data;
+  } catch (error) {
+    if (error.status === 404) return; // A first release has no tag yet.
+    throw error;
+  }
+  let sha = reference.object.sha;
+  if (reference.object.type === 'tag') {
+    // Annotated tags point to tag objects; compare the resolved commit instead.
+    sha = (await github.rest.repos.getCommit({ owner: identity.owner, repo: identity.repo, ref: `refs/tags/${tag}` })).data.sha;
+  } else if (reference.object.type !== 'commit') {
+    throw new Error('Release tag does not target a commit.');
+  }
+  if (sha !== identity.sha) throw new Error('Existing version tag targets another commit.');
+}
+
 export async function releaseFiles(directory, version, bannerFile) {
   versionParts(version);
   const files = [];
@@ -69,6 +89,7 @@ export async function publishRelease({ github, identity, version, notes, files }
   if (files.length !== expected.length || expected.some(name => !files.some(file => file.name === name))) {
     throw new Error('Only both installers, their checksums and the release banner may be published.');
   }
+  await assertReleaseTagTarget({ github, identity, tag });
   const repo = { owner: identity.owner, repo: identity.repo };
   let release;
   try {

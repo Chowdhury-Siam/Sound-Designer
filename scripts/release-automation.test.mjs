@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { shouldRelease, parseReleaseNotes, releaseFiles, publishRelease } from './release-automation.mjs';
+import { createRequire } from 'node:module';
+import { shouldRelease, parseReleaseNotes, assertReleaseTagTarget, releaseFiles, publishRelease } from './release-automation.mjs';
 import { BANNER_NAME, BANNER_START } from './release-banner.mjs';
 
 const version = '1.0.5';
@@ -15,6 +16,67 @@ const names = [`SoundDesigner-v${version}-Windows-Setup.exe`, `SoundDesigner-v${
 const files = names.map(name => ({ name, data: Buffer.from(name) }));
 const assetFor = file => ({ name: file.name, state: 'uploaded', size: file.data.length,
   digest: `sha256:${createHash('sha256').update(file.data).digest('hex')}` });
+
+test('the actual Actions planning script accepts a not-yet-created release tag', async () => {
+  const currentVersion = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
+  const tag = `v${currentVersion}`;
+  const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
+  const source = workflow.match(/script: \|\r?\n([\s\S]*?)(?=\r?\n  build-installers:)/)?.[1];
+  assert.ok(source, 'Planning script must be present');
+  const script = source.replace(/^ {12}/gm, '');
+  const outputs = {};
+  let commitRequests = 0;
+  const missing = () => { throw Object.assign(new Error('Not Found'), { status: 404 }); };
+  const github = { rest: {
+    git: { getRef: async args => { assert.equal(args.ref, `tags/${tag}`); return missing(); } },
+    repos: {
+      getReleaseByTag: async () => missing(),
+      getCommit: async () => {
+        commitRequests += 1;
+        throw Object.assign(new Error(`No commit found for SHA: ${tag}`), { status: 422 });
+      },
+    },
+  } };
+  const context = { eventName: 'workflow_dispatch', ref: 'refs/heads/main', repo: identity,
+    sha: identity.sha, payload: { inputs: { publish_release: 'true' } } };
+  const core = { info: () => {}, setOutput: (name, value) => { outputs[name] = value; } };
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  await new AsyncFunction('github', 'context', 'core', 'require', script)(github, context, core, createRequire(import.meta.url));
+  assert.equal(outputs.publish, 'true');
+  assert.equal(outputs.tag, tag);
+  assert.equal(commitRequests, 0, 'A nonexistent tag must not be resolved through the commits endpoint');
+});
+
+test('tag checking accepts matching lightweight/annotated tags and refuses mismatches or API errors', async () => {
+  for (const type of ['commit', 'tag']) {
+    for (const sha of [identity.sha, 'b'.repeat(40)]) {
+      const github = { rest: {
+        git: { getRef: async args => {
+          assert.equal(args.ref, 'tags/v1.0.5');
+          return { data: { object: { type, sha: type === 'tag' ? 'c'.repeat(40) : sha } } };
+        } },
+        repos: { getCommit: async args => {
+          assert.equal(args.ref, 'refs/tags/v1.0.5');
+          return { data: { sha } };
+        } },
+      } };
+      const check = assertReleaseTagTarget({ github, identity, tag: 'v1.0.5' });
+      if (sha === identity.sha) await check;
+      else await assert.rejects(check, /another commit/);
+    }
+  }
+  for (const status of [403, 422, 500]) {
+    const error = Object.assign(new Error('API failure'), { status });
+    const github = { rest: { git: { getRef: async () => { throw error; } } } };
+    await assert.rejects(assertReleaseTagTarget({ github, identity, tag: 'v1.0.5' }), thrown => thrown === error);
+  }
+  const error = Object.assign(new Error('Annotated tag resolution failed'), { status: 422 });
+  const github = { rest: {
+    git: { getRef: async () => ({ data: { object: { type: 'tag', sha: 'c'.repeat(40) } } }) },
+    repos: { getCommit: async () => { throw error; } },
+  } };
+  await assert.rejects(assertReleaseTagTarget({ github, identity, tag: 'v1.0.5' }), thrown => thrown === error);
+});
 
 test('only main version increases or explicit main retries release; commit wording is irrelevant', () => {
   const input = { eventName: 'push', ref: 'refs/heads/main', version, previousVersion: '1.0.4' };
@@ -60,7 +122,7 @@ test('checks both versioned installers and checksum sidecars before permitting p
   }
 });
 
-function fixture({ existing, assets = [], uploadFailure = false, corruptUpload = false, apiFailure = false } = {}) {
+function fixture({ existing, assets = [], uploadFailure = false, corruptUpload = false, apiFailure = false, tagSha } = {}) {
   const writes = [];
   const uploaded = [...assets];
   const repos = {
@@ -79,7 +141,11 @@ function fixture({ existing, assets = [], uploadFailure = false, corruptUpload =
     },
     updateRelease: async args => { writes.push({ operation: 'publish', ...args }); return { data: { ...args, html_url: 'https://example.test/release' } }; },
   };
-  return { writes, options: { github: { rest: { repos }, paginate: async () => uploaded }, identity, version, notes, files } };
+  const git = { getRef: async () => {
+    if (tagSha) return { data: { object: { type: 'commit', sha: tagSha } } };
+    throw Object.assign(new Error('Not found'), { status: 404 });
+  } };
+  return { writes, options: { github: { rest: { repos, git }, paginate: async () => uploaded }, identity, version, notes, files } };
 }
 
 test('stages privately, verifies every asset, then publishes publicly with notes, title and banner', async () => {
@@ -120,6 +186,7 @@ test('reruns resume only matching private assets without replacing user releases
     { existing, assets: [{ ...assetFor(files[0]), digest: 'sha256:different' }] },
     { existing, assets: [{ name: 'internal.zxp' }] },
     { apiFailure: true },
+    { tagSha: 'b'.repeat(40) },
   ]) {
     const { writes, options } = fixture(input);
     await assert.rejects(publishRelease(options));
@@ -147,7 +214,7 @@ test('the current release metadata matches the package and unsigned installer po
   assert.match(workflow, /branches: \[main\]/);
   assert.match(workflow, /shouldRelease\(/);
   assert.match(workflow, /fetch-depth: 0/);
-  assert.match(workflow, /getCommit/);
+  assert.match(workflow, /await assertReleaseTagTarget\(/);
   assert.match(workflow, /publish_release/);
   assert.match(workflow, /SOUNDDESIGNER_INSTALLER_CANDIDATE: '1'/);
   assert.match(workflow, /ALLOW_MISSING_NATIVE: '0'/);
