@@ -3,7 +3,7 @@
   <Plugin>
     <Id>com.sound.designer.resolve</Id>
     <Name>SoundDesigner</Name>
-    <Version>1.0.4</Version>
+    <Version>1.0.5</Version>
     <Description>Sound effects workspace for DaVinci Resolve</Description>
     <FilePath>main.cjs</FilePath>
   </Plugin>

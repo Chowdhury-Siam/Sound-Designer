@@ -22,6 +22,10 @@ See [compatibility and known limitations](COMPATIBILITY.md). Native certificatio
 
 </div>
 
+> [!WARNING]
+> **DaVinci Resolve users: Studio is required.**
+> SoundDesigner's Resolve extension only runs in **DaVinci Resolve Studio**. **The free version of DaVinci Resolve does not support Workflow Integration plugins**, so it cannot run this extension.
+
 ---
 
 ## 🧭 Explore
